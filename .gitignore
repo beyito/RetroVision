@@ -1,0 +1,36 @@
+# ========================
+# REGLAS DE IGNORADO GLOBAL
+# ========================
+
+# 1. Entornos Virtuales (Python)
+venv/
+env/
+.venv/
+
+# 2. Caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 3. Credenciales y Secretos (¡CRÍTICO!)
+.env
+.env.local
+
+# 4. Frontend (React/Node)
+node_modules/
+dist/
+build/
+.npm/
+
+# 5. Modelos de IA y Archivos Pesados
+*.pt
+*.onnx
+*.weights
+
+# 6. Evidencia de Video (No subir grabaciones locales)
+alerts/*.mp4
+*.avi
+
+# 7. Bases de datos locales
+*.sqlite3

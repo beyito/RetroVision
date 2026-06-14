@@ -1,0 +1,102 @@
+"""
+RetroVision Edge Service - Configuración
+
+Módulo de configuración centralizado para el microservicio Edge.
+Maneja variables de entorno y parámetros del sistema.
+"""
+
+import os
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class VideoConfig:
+    """Configuración de captura de video."""
+    camera_index: int = 0
+    frame_width: int = 1280
+    frame_height: int = 720
+    fps: int = 30
+    fourcc_codec: str = 'MJPG'  # Motion JPEG para mejor compresión
+    timeout_seconds: int = 10
+
+
+@dataclass
+class RingBufferConfig:
+    """Configuración del Ring Buffer para almacenamiento en RAM."""
+    buffer_duration_seconds: int = 30
+    cleanup_interval_seconds: int = 60
+
+
+@dataclass
+class MQTTConfig:
+    """Configuración del broker MQTT (para fases posteriores)."""
+    broker_host: str = "localhost"
+    broker_port: int = 1883
+    client_id: str = "retrovision-edge-01"
+    camera_id: str = "camera-01"
+    topic: str = "retrovision/edge/alerts"
+    keep_alive: int = 60
+    enabled: bool = True
+
+
+@dataclass
+class LoggingConfig:
+    """Configuración de logging."""
+    level: str = "INFO"
+    log_file: str = "logs/edge_service.log"
+    max_bytes: int = 10 * 1024 * 1024  # 10 MB
+    backup_count: int = 5
+
+
+class EdgeServiceConfig:
+    """Clase principal de configuración. Gestiona todas las secciones."""
+
+    def __init__(self):
+        """Inicializa la configuración desde variables de entorno."""
+        self.video = VideoConfig(
+            camera_index=int(os.getenv('CAMERA_INDEX', 0)),
+            frame_width=int(os.getenv('FRAME_WIDTH', 1280)),
+            frame_height=int(os.getenv('FRAME_HEIGHT', 720)),
+            fps=int(os.getenv('FPS', 30)),
+        )
+
+        self.ring_buffer = RingBufferConfig(
+            buffer_duration_seconds=int(os.getenv('BUFFER_DURATION', 30)),
+        )
+
+        self.mqtt = MQTTConfig(
+            broker_host=os.getenv('MQTT_BROKER_HOST', 'localhost'),
+            broker_port=int(os.getenv('MQTT_BROKER_PORT', 1883)),
+            client_id=os.getenv('MQTT_CLIENT_ID', 'retrovision-edge-01'),
+            camera_id=os.getenv('CAMERA_ID', 'camera-01'),
+            topic=os.getenv('MQTT_ALERTS_TOPIC', 'retrovision/edge/alerts'),
+            keep_alive=int(os.getenv('MQTT_KEEP_ALIVE', 60)),
+            enabled=os.getenv('MQTT_ENABLED', 'true').lower() == 'true',
+        )
+
+        self.logging = LoggingConfig(
+            level=os.getenv('LOG_LEVEL', 'INFO'),
+            log_file=os.getenv('LOG_FILE', 'logs/edge_service.log'),
+        )
+
+        self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
+
+    def validate(self) -> None:
+        """
+        Valida la configuración.
+        
+        Raises:
+            ValueError: Si algún parámetro es inválido.
+        """
+        if self.video.camera_index < 0:
+            raise ValueError("camera_index debe ser >= 0")
+        
+        if self.video.frame_width <= 0 or self.video.frame_height <= 0:
+            raise ValueError("Dimensiones de frame deben ser positivas")
+        
+        if self.video.fps <= 0:
+            raise ValueError("FPS debe ser mayor a 0")
+        
+        if self.ring_buffer.buffer_duration_seconds <= 0:
+            raise ValueError("buffer_duration_seconds debe ser mayor a 0")

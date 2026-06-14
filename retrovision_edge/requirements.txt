@@ -1,0 +1,9 @@
+opencv-python==4.8.1.78
+opencv-contrib-python==4.8.1.78
+python-dotenv==1.0.0
+numpy<2.0.0
+ultralytics==8.0.196
+torch==2.1.1
+torchvision==0.16.1
+mediapipe==0.10.14
+paho-mqtt>=2.0,<3.0

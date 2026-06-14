@@ -33,3 +33,32 @@ class SecurityAlert(models.Model):
     def __str__(self) -> str:
         """Return a readable alert representation."""
         return f"{self.camera_id} | {self.risk_score:.2f} | {self.timestamp.isoformat()}"
+
+
+class Telemetria_Afluencia(models.Model):
+    """Store customer traffic flow data from cameras."""
+    timestamp = models.DateTimeField(db_index=True)
+    camera_id = models.CharField(max_length=128, db_index=True)
+    personas_entrantes = models.IntegerField(default=0)
+    personas_salientes = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+    def __str__(self) -> str:
+        return f"{self.camera_id} | In: {self.personas_entrantes} | Out: {self.personas_salientes} | {self.timestamp.isoformat()}"
+
+
+class Heatmaps(models.Model):
+    """Store raw or generated heat matrix coordinate data."""
+    timestamp = models.DateTimeField(db_index=True)
+    camera_id = models.CharField(max_length=128, db_index=True)
+    coordenadas_json = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+    def __str__(self) -> str:
+        return f"{self.camera_id} | Heatmap | {self.timestamp.isoformat()}"

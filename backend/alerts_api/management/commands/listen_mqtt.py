@@ -66,7 +66,7 @@ class Command(BaseCommand):
             LOGGER.warning("Unexpected MQTT disconnection rc=%s", rc)
 
     def _on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
-        """Persist a SecurityAlert from an MQTT JSON payload."""
+        """Persist a SecurityAlert from an MQTT JSON payload and broadcast via WebSocket."""
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             alert = SecurityAlert.objects.create(
@@ -77,6 +77,29 @@ class Command(BaseCommand):
                 video_path=payload.get("video_path") or None,
             )
             LOGGER.info("SecurityAlert saved id=%s camera_id=%s", alert.id, alert.camera_id)
+            
+            # Broadcast to channels group
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+            
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    "security_alerts",
+                    {
+                        "type": "alert_message",
+                        "alert": {
+                            "id": alert.id,
+                            "timestamp": alert.timestamp.isoformat(),
+                            "camera_id": alert.camera_id,
+                            "risk_score": alert.risk_score,
+                            "rules_triggered": alert.rules_triggered,
+                            "video_path": alert.video_path,
+                            "created_at": alert.created_at.isoformat() if alert.created_at else None,
+                        }
+                    }
+                )
+                LOGGER.info("SecurityAlert broadcasted to WebSocket group")
         except KeyError as exc:
             LOGGER.warning("MQTT alert missing required field: %s", exc)
         except json.JSONDecodeError:

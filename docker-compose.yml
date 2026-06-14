@@ -1,0 +1,74 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: retrovision-db
+    restart: always
+    ports:
+      - "5434:5432" # Maps Docker 5432 to Host 5433 to avoid local conflicts
+    environment:
+      POSTGRES_DB: retrovision
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - retrovision-net
+
+  redis:
+    image: redis:alpine
+    container_name: retrovision-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - retrovision-net
+
+  web:
+    build: ./backend
+    container_name: retrovision-web
+    restart: always
+    command: daphne -b 0.0.0.0 -p 8000 retrovision_core.asgi:application
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - retrovision-net
+
+  mqtt_worker:
+    build: ./backend
+    container_name: retrovision-mqtt-worker
+    restart: always
+    command: python manage.py listen_mqtt
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+      - redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - retrovision-net
+
+  mosquitto:
+    image: eclipse-mosquitto:1.6.15
+    container_name: retrovision_mosquitto
+    ports:
+      - "1883:1883"
+    networks:
+      - retrovision-net
+
+volumes:
+  postgres_data:
+
+networks:
+  retrovision-net:
+    name: retrovision-net
+    driver: bridge

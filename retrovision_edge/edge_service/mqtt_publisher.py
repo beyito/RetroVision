@@ -25,6 +25,7 @@ class AlertPublisher:
         broker_port: int = 1883,
         client_id: str = "retrovision-edge-01",
         topic: str = "retrovision/edge/alerts",
+        telemetry_topic: str = "retrovision/telemetry",
         keep_alive: int = 60,
         enabled: bool = True,
     ) -> None:
@@ -35,6 +36,7 @@ class AlertPublisher:
             broker_port: MQTT broker port.
             client_id: MQTT client identifier for this Edge node.
             topic: Topic where alert events are published.
+            telemetry_topic: Topic where telemetry events are published.
             keep_alive: MQTT keepalive in seconds.
             enabled: If False, publishing becomes a no-op.
         """
@@ -43,6 +45,7 @@ class AlertPublisher:
         self.broker_port = broker_port
         self.client_id = client_id
         self.topic = topic
+        self.telemetry_topic = telemetry_topic
         self.keep_alive = keep_alive
         self.enabled = enabled
 
@@ -137,6 +140,53 @@ class AlertPublisher:
             return True
         except Exception as exc:
             self.logger.warning("MQTT publish skipped after error: %s", exc)
+            return False
+
+    def publish_telemetry(
+        self,
+        camera_id: str,
+        personas_entrantes: int,
+        personas_salientes: int,
+        personas_en_cola: int,
+        tiempo_espera_promedio: float,
+        heatmap_points: list[list[int]],
+        timestamp: Optional[datetime] = None,
+    ) -> bool:
+        """Publish a commercial telemetry and heatmap event.
+
+        Returns:
+            True if the publish call was accepted by the MQTT client.
+        """
+        if not self.enabled or self._client is None:
+            return False
+
+        event_time = timestamp or datetime.now(timezone.utc)
+        payload = {
+            "timestamp": event_time.isoformat(),
+            "camera_id": camera_id,
+            "personas_entrantes": int(personas_entrantes),
+            "personas_salientes": int(personas_salientes),
+            "personas_en_cola": int(personas_en_cola),
+            "tiempo_espera_promedio": round(float(tiempo_espera_promedio), 2),
+            "heatmap_points": list(heatmap_points),
+        }
+
+        try:
+            with self._lock:
+                result = self._client.publish(
+                    self.telemetry_topic,
+                    json.dumps(payload),
+                    qos=1,
+                    retain=False,
+                )
+
+            if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                self.logger.warning("MQTT telemetry publish failed rc=%s payload=%s", result.rc, payload)
+                return False
+
+            return True
+        except Exception as exc:
+            self.logger.warning("MQTT telemetry publish skipped after error: %s", exc)
             return False
 
     def release(self) -> None:

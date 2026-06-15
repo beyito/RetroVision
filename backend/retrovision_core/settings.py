@@ -87,6 +87,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "localhost")
 MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
 MQTT_ALERTS_TOPIC = os.getenv("MQTT_ALERTS_TOPIC", "retrovision/edge/alerts")
+MQTT_TELEMETRY_TOPIC = os.getenv("MQTT_TELEMETRY_TOPIC", "retrovision/telemetry")
 
 CORS_ALLOW_ALL_ORIGINS = True
 

@@ -6,6 +6,7 @@ Maneja variables de entorno y parámetros del sistema.
 """
 
 import os
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -30,12 +31,15 @@ class RingBufferConfig:
 
 @dataclass
 class MQTTConfig:
-    """Configuración del broker MQTT (para fases posteriores)."""
+    """Configuración del broker MQTT."""
     broker_host: str = "localhost"
     broker_port: int = 1883
     client_id: str = "retrovision-edge-01"
     camera_id: str = "camera-01"
     topic: str = "retrovision/edge/alerts"
+    telemetry_topic: str = "retrovision/telemetry"
+    roi_polygon: list = None
+    queue_wait_threshold: float = 5.0
     keep_alive: int = 60
     enabled: bool = True
 
@@ -65,12 +69,22 @@ class EdgeServiceConfig:
             buffer_duration_seconds=int(os.getenv('BUFFER_DURATION', 30)),
         )
 
+        # Parse polygon ROI
+        roi_env = os.getenv('ROI_POLYGON', '[[500, 350], [900, 350], [1100, 650], [400, 650]]')
+        try:
+            roi_poly = json.loads(roi_env)
+        except Exception:
+            roi_poly = [[500, 350], [900, 350], [1100, 650], [400, 650]]
+
         self.mqtt = MQTTConfig(
             broker_host=os.getenv('MQTT_BROKER_HOST', 'localhost'),
             broker_port=int(os.getenv('MQTT_BROKER_PORT', 1883)),
             client_id=os.getenv('MQTT_CLIENT_ID', 'retrovision-edge-01'),
             camera_id=os.getenv('CAMERA_ID', 'camera-01'),
             topic=os.getenv('MQTT_ALERTS_TOPIC', 'retrovision/edge/alerts'),
+            telemetry_topic=os.getenv('MQTT_TELEMETRY_TOPIC', 'retrovision/telemetry'),
+            roi_polygon=roi_poly,
+            queue_wait_threshold=float(os.getenv('QUEUE_WAIT_THRESHOLD', 5.0)),
             keep_alive=int(os.getenv('MQTT_KEEP_ALIVE', 60)),
             enabled=os.getenv('MQTT_ENABLED', 'true').lower() == 'true',
         )

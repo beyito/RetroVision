@@ -41,6 +41,8 @@ class Telemetria_Afluencia(models.Model):
     camera_id = models.CharField(max_length=128, db_index=True)
     personas_entrantes = models.IntegerField(default=0)
     personas_salientes = models.IntegerField(default=0)
+    personas_en_cola = models.IntegerField(default=0)
+    tiempo_espera_promedio = models.FloatField(default=0.0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -3,12 +3,7 @@ RetroVision Edge Service - Pipeline de Detección
 
 Módulo que orquesta el flujo completo de captura de video + detección de objetos.
 Responsabilidad: Coordinar VideoStreamProcessor, ObjectDetector, PostureEstimator,
-BehaviorAnalyzer, RingBuffer y AlertWriter.
-
-Arquitectura FASE 2:
-    Cámara → VideoStreamProcessor → ObjectDetector → PostureEstimator → 
-    BehaviorAnalyzer → RingBuffer (almacena frames) → 
-    Dibujar + Mostrar + (Alerta si risk > 0.7)
+BehaviorAnalyzer, RingBuffer, AlertWriter y AlertPublisher.
 """
 
 import logging
@@ -16,6 +11,7 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 import time
 import cv2
+import numpy as np
 
 from .video_stream import VideoStreamProcessor, FrameMetadata
 from .object_detector import ObjectDetector, DetectionResult, Detection
@@ -43,15 +39,10 @@ class DetectionPipeline:
     
     Responsabilidades:
     - Capturar frames desde cámara
-    - Procesar con YOLOv8
-    - Dibujar bounding boxes
-    - Mantener estadísticas
-    - Logging de eventos
-    
-    Attributes:
-        video_processor: VideoStreamProcessor para captura
-        object_detector: ObjectDetector para inferencia
-        draw_detections: Si dibuja bounding boxes en frame
+    - Detección y tracking con YOLOv8
+    - Dibujar bounding boxes y trazas
+    - Analizar afluencia y ROI
+    - Generar heatmap
     """
     
     def __init__(
@@ -68,23 +59,14 @@ class DetectionPipeline:
         mqtt_broker_port: int = 1883,
         mqtt_client_id: str = "retrovision-edge-01",
         mqtt_topic: str = "retrovision/edge/alerts",
+        mqtt_telemetry_topic: str = "retrovision/telemetry",
+        roi_polygon: Optional[list] = None,
+        queue_wait_threshold: float = 5.0,
         mqtt_keep_alive: int = 60,
         camera_id: str = "camera-01",
     ) -> None:
         """
         Inicializa el pipeline de detección.
-        
-        Args:
-            camera_index: Índice de cámara (default: 0)
-            frame_width: Ancho del frame (default: 1280)
-            frame_height: Alto del frame (default: 720)
-            target_fps: FPS objetivo (default: 30)
-            model_name: Nombre del modelo YOLOv8 (default: yolov8n.pt)
-            confidence_threshold: Umbral de confianza (default: 0.5)
-            draw_detections: Si dibuja bounding boxes (default: True)
-            
-        Raises:
-            RetroVisionEdgeException: Si hay error al inicializar
         """
         self.logger = logging.getLogger(self.__class__.__name__)
         
@@ -94,12 +76,37 @@ class DetectionPipeline:
         self.target_fps = target_fps
         self.draw_detections = draw_detections
         self.camera_id = camera_id
+        
+        # Phase 5 properties
+        self.roi_polygon = roi_polygon or [[500, 350], [900, 350], [1100, 650], [400, 650]]
+        self.queue_wait_threshold = queue_wait_threshold
+        
+        # Trajectory trail history: track_id -> list of centroids
+        self.trajectory_history = {}
+        # Entry time in ROI: track_id -> float timestamp
+        self.roi_entry_times = {}
+        # Last seen time: track_id -> float timestamp
+        self.last_seen_time = {}
+        
+        # Telemetry aggregators
+        self.seen_track_ids = set()
+        self.personas_entrantes_count = 0
+        self.personas_salientes_count = 0
+        self.recent_heatmap_points = []
+        self.last_telemetry_publish_time = time.time()
+        
+        # Heatmap float32 accumulator
+        self.heatmap_accumulator = np.zeros((frame_height, frame_width), dtype=np.float32)
+        # ROI numpy polygon
+        self.roi_poly_np = np.array(self.roi_polygon, dtype=np.int32).reshape((-1, 1, 2))
+        
         self._mqtt_config = {
             "enabled": mqtt_enabled,
             "broker_host": mqtt_broker_host,
             "broker_port": mqtt_broker_port,
             "client_id": mqtt_client_id,
             "topic": mqtt_topic,
+            "telemetry_topic": mqtt_telemetry_topic,
             "keep_alive": mqtt_keep_alive,
         }
         
@@ -123,13 +130,6 @@ class DetectionPipeline:
     ) -> None:
         """
         Inicializa los componentes del pipeline.
-        
-        Args:
-            model_name: Nombre del modelo YOLO
-            confidence_threshold: Umbral de confianza
-            
-        Raises:
-            RetroVisionEdgeException: Si hay error en inicialización
         """
         try:
             self.logger.info("Inicializando pipeline de detección...")
@@ -149,8 +149,7 @@ class DetectionPipeline:
                 device="cpu",
             )
 
-            # Inicializar estimador de postura (MediaPipe). Si falla,
-            # continuamos sin estimación de postura pero registramos la falla.
+            # Inicializar estimador de postura (MediaPipe)
             try:
                 self._posture_estimator = PostureEstimator(model_complexity=0)
             except Exception as e:
@@ -164,7 +163,7 @@ class DetectionPipeline:
                 self._behavior_analyzer = None
                 self.logger.warning(f"BehaviorAnalyzer no inicializado: {e}")
             
-            # Inicializar ring buffer (FASE 2) - CORREGIDO self.target_fps
+            # Inicializar ring buffer (FASE 2)
             try:
                 self._ring_buffer = RingBuffer(fps=self.target_fps, retention_seconds=30)
             except Exception as e:
@@ -185,7 +184,7 @@ class DetectionPipeline:
                 self._alert_publisher = None
                 self.logger.warning(f"AlertPublisher no inicializado: {e}")
             
-            self.logger.info("Pipeline de detección inicializado exitosamente (FASE 2)")
+            self.logger.info("Pipeline de detección inicializado exitosamente")
             
         except Exception as e:
             self.logger.error(f"Error al inicializar pipeline: {e}")
@@ -207,22 +206,12 @@ class DetectionPipeline:
     def is_running(self) -> bool:
         """Retorna True si el pipeline está activo."""
         return self._is_running
-    
+        
     def process_frame(
         self,
-    ) -> Tuple[bool, Optional[bytes], Optional[FrameMetadata], Optional[DetectionResult]]:
+    ) -> Tuple[bool, Optional[np.ndarray], Optional[FrameMetadata], Optional[DetectionResult]]:
         """
-        Procesa un frame completo: captura → detección → dibuja.
-        
-        Returns:
-            Tupla (success, frame, frame_metadata, detection_result) donde:
-            - success: bool indicando éxito
-            - frame: numpy array del frame (con bounding boxes si detect)
-            - frame_metadata: FrameMetadata del frame
-            - detection_result: DetectionResult con detecciones
-            
-        Raises:
-            FrameProcessingError: Si hay error en procesamiento
+        Procesa un frame completo: captura → detección/tracking → dibuja → analíticas.
         """
         try:
             # 1. Capturar frame
@@ -231,7 +220,7 @@ class DetectionPipeline:
             if not success or frame is None:
                 return False, None, None, None
             
-            # 2. Ejecutar detección
+            # 2. Ejecutar detección y tracking
             detection_result = self._object_detector.detect(frame)
             
             # 3. Actualizar estadísticas
@@ -253,7 +242,7 @@ class DetectionPipeline:
             # 4. Dibujar detecciones si está habilitado
             frame_to_display = frame.copy()
             if self.draw_detections and detection_result.count() > 0:
-                # Primero dibujar bounding boxes
+                # Primero dibujar bounding boxes con IDs
                 frame_to_display = self._object_detector.draw_detections(
                     frame,
                     detection_result.detections,
@@ -288,7 +277,6 @@ class DetectionPipeline:
 
                             lm_norm = self._posture_estimator.estimate(roi_rgb)
                             if not lm_norm:
-                                # No landmarks detectados
                                 det.landmarks = None
                                 continue
 
@@ -296,7 +284,6 @@ class DetectionPipeline:
                                 lm_norm, (x1c, y1c), (roi_w, roi_h)
                             )
 
-                            # Guardar landmarks absolutos en la detección
                             det.landmarks = lm_abs
 
                             # Dibujar sobre el frame principal
@@ -306,7 +293,120 @@ class DetectionPipeline:
                         except Exception as e:
                             self.logger.debug(f"Posture estimation failed for detection: {e}")
             
-            # FASE 2: Análisis de Riesgo y Disparador de Alertas
+            # --- PHASE 5: SPATIAL ANALYTICS AND TRACKING ---
+            current_time = time.time()
+            detected_track_ids = set()
+
+            # Draw ROI Queue Area polygon
+            cv2.polylines(frame_to_display, [self.roi_poly_np], isClosed=True, color=(0, 165, 255), thickness=2)
+            cv2.putText(
+                frame_to_display,
+                "ROI COLA",
+                (self.roi_polygon[0][0], self.roi_polygon[0][1] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 165, 255),
+                2,
+            )
+
+            # Process trajectories, ROI and heatmap coordinates
+            for det in detection_result.detections:
+                cx, cy = det.center()
+                
+                # Accumulate recent coordinates for database heatmap matrix
+                self.recent_heatmap_points.append([int(cx), int(cy)])
+                
+                # Accumulate visual heatmap matrix
+                cv2.circle(self.heatmap_accumulator, (int(cx), int(cy)), 25, 0.05, -1)
+
+                if det.track_id is not None:
+                    tid = det.track_id
+                    detected_track_ids.add(tid)
+                    self.last_seen_time[tid] = current_time
+
+                    # 1. Update Trajectory trail history
+                    if tid not in self.trajectory_history:
+                        self.trajectory_history[tid] = []
+                    self.trajectory_history[tid].append((int(cx), int(cy)))
+                    if len(self.trajectory_history[tid]) > 40:
+                        self.trajectory_history[tid].pop(0)
+
+                    # Draw trail line
+                    trail = self.trajectory_history[tid]
+                    if len(trail) > 1:
+                        for i in range(1, len(trail)):
+                            cv2.line(frame_to_display, trail[i-1], trail[i], (255, 0, 0), 2)  # Blue line
+
+                    # 2. Check if inside ROI polygon
+                    inside = cv2.pointPolygonTest(self.roi_poly_np, (float(cx), float(cy)), False) >= 0
+                    if inside:
+                        if tid not in self.roi_entry_times:
+                            self.roi_entry_times[tid] = current_time
+                        
+                        elapsed = current_time - self.roi_entry_times[tid]
+                        # Draw warning text on frame if waiting > threshold
+                        if elapsed >= self.queue_wait_threshold:
+                            cv2.putText(
+                                frame_to_display,
+                                f"ID {tid} ESPERA: {elapsed:.1f}s",
+                                (det.x1, det.y1 - 25),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5,
+                                (0, 0, 255),
+                                2,
+                            )
+                    else:
+                        if tid in self.roi_entry_times:
+                            self.roi_entry_times.pop(tid)
+
+                    # 3. Calculate Incoming Flow
+                    if tid not in self.seen_track_ids:
+                        self.seen_track_ids.add(tid)
+                        self.personas_entrantes_count += 1
+
+            # Clean up missing track IDs (lost longer than 5 seconds)
+            for tid in list(self.last_seen_time.keys()):
+                if current_time - self.last_seen_time[tid] > 5.0:
+                    self.last_seen_time.pop(tid)
+                    if tid in self.trajectory_history:
+                        self.trajectory_history.pop(tid)
+                    if tid in self.roi_entry_times:
+                        self.roi_entry_times.pop(tid)
+                    self.personas_salientes_count += 1
+
+            # Draw visual Heatmap Blend Overlay
+            if np.max(self.heatmap_accumulator) > 0:
+                heatmap_norm = cv2.normalize(self.heatmap_accumulator, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                heatmap_color = cv2.applyColorMap(heatmap_norm, cv2.COLORMAP_JET)
+                frame_to_display = cv2.addWeighted(frame_to_display, 0.7, heatmap_color, 0.3, 0)
+
+            # 4. Periodically publish commercial telemetry to MQTT every 3 seconds
+            if current_time - self.last_telemetry_publish_time >= 3.0:
+                # Calculate wait times inside ROI
+                roi_waits = []
+                for tid, entry_time in list(self.roi_entry_times.items()):
+                    elapsed = current_time - entry_time
+                    if elapsed >= self.queue_wait_threshold:
+                        roi_waits.append(elapsed)
+                
+                personas_en_cola = len(roi_waits)
+                tiempo_espera_promedio = sum(roi_waits) / personas_en_cola if personas_en_cola > 0 else 0.0
+                
+                if self._alert_publisher is not None:
+                    self._alert_publisher.publish_telemetry(
+                        camera_id=self.camera_id,
+                        personas_entrantes=self.personas_entrantes_count,
+                        personas_salientes=self.personas_salientes_count,
+                        personas_en_cola=personas_en_cola,
+                        tiempo_espera_promedio=tiempo_espera_promedio,
+                        heatmap_points=self.recent_heatmap_points,
+                    )
+                
+                self.recent_heatmap_points = []
+                self.last_telemetry_publish_time = current_time
+
+            # --- END PHASE 5 ---
+
             # 5. Guardar frame en ring buffer (FASE 2)
             if self._ring_buffer is not None:
                 self._ring_buffer.add_frame(frame)
@@ -316,11 +416,9 @@ class DetectionPipeline:
                 high_risk_detected = False
                 for det in detection_result.detections:
                     try:
-                        # Analizar comportamiento basado en landmarks
                         analysis = self._behavior_analyzer.analyze(det.landmarks)
                         det.risk_score = analysis.risk_score
                         
-                        # Si hay alto riesgo, disparar alerta
                         if analysis.risk_score > 0.7:
                             high_risk_detected = True
                             self.logger.warning(
@@ -330,7 +428,7 @@ class DetectionPipeline:
                     except Exception as e:
                         self.logger.debug(f"Risk analysis failed for detection: {e}")
                 
-                # Si se detectó alto riesgo y el alert writer está listo, guardar video
+                # Guardar video si se disparó alerta
                 if high_risk_detected and self._alert_writer.is_alert_ready():
                     try:
                         frames_to_save = self._ring_buffer.get_frames()
@@ -367,22 +465,14 @@ class DetectionPipeline:
     
     def display_frame_with_info(
         self,
-        frame: bytes,
+        frame: np.ndarray,
         metadata: FrameMetadata,
         detection_result: Optional[DetectionResult] = None,
         window_name: str = "RetroVision Edge - Detection Pipeline",
     ) -> None:
         """
         Muestra frame con información de video y detección.
-        
-        Args:
-            frame: Frame a mostrar
-            metadata: Metadatos del frame
-            detection_result: Resultado de detección (opcional)
-            window_name: Nombre de la ventana
         """
-        import cv2
-        
         # Frame info
         info_text = (
             f"Frame: {metadata.frame_number} | "
@@ -417,6 +507,18 @@ class DetectionPipeline:
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
             (0, 255, 255),  # Cyan
+            2,
+        )
+        
+        # Draw analytics stats overlay
+        stats_text = f"In: {self.personas_entrantes_count} | Out: {self.personas_salientes_count}"
+        cv2.putText(
+            frame,
+            stats_text,
+            (10, 110),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 165, 255),
             2,
         )
         
@@ -481,7 +583,7 @@ class DetectionPipeline:
                 except Exception:
                     pass
                 self._alert_writer = None
-
+ 
             if self._alert_publisher:
                 try:
                     self._alert_publisher.release()
@@ -490,7 +592,7 @@ class DetectionPipeline:
                 self._alert_publisher = None
             
             self._is_running = False
-            self.logger.info("Pipeline liberado correctamente (FASE 2)")
+            self.logger.info("Pipeline liberado correctamente")
             
         except Exception as e:
             self.logger.error(f"Error al liberar pipeline: {e}")

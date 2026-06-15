@@ -2,10 +2,7 @@
 RetroVision Edge Service - Script Principal de Entrada
 
 Punto de entrada para el microservicio Edge.
-FASE 1 - PASO 1.2: Captura de video + Detección YOLOv8 de personas.
-
-Arquitectura del flujo:
-    Cámara → VideoCapture → ObjectDetector (YOLOv8) → Dibuja BBoxes → Display
+FASE 5: Analítica Espacial Compleja, Tracking, ROI y Heatmaps.
 """
 
 import sys
@@ -30,14 +27,6 @@ from edge_service.logger_config import setup_logger
 class EdgeServiceRunner:
     """
     Orquestador principal del microservicio Edge.
-    
-    FASE 1.2: Integra captura de video + detección YOLOv8.
-    
-    Responsabilidades:
-    - Inicializar la configuración
-    - Gestionar el ciclo de vida del pipeline de detección
-    - Manejar señales del sistema (SIGINT, SIGTERM)
-    - Procesar frames con detección en el loop principal
     """
     
     def __init__(self) -> None:
@@ -66,10 +55,6 @@ class EdgeServiceRunner:
     def _signal_handler(self, signum, frame) -> None:
         """
         Handler para Ctrl+C y terminación.
-        
-        Args:
-            signum: Número de la señal
-            frame: Stack frame actual
         """
         self.logger.info(f"Recibida señal {signum}. Deteniendo servicio...")
         self._cleanup()
@@ -78,20 +63,11 @@ class EdgeServiceRunner:
     def run(self) -> None:
         """
         Inicia el loop principal de captura, detección y procesamiento.
-        
-        Loop principal:
-        1. Lee frame de la cámara
-        2. Ejecuta inferencia YOLOv8 (solo personas, clase 0)
-        3. Dibuja bounding boxes sobre personas
-        4. Muestra frame con información en ventana
-        5. Espera tecla 'q' para salir
-        6. Imprime estadísticas
-        7. Limpia recursos
         """
         try:
             self.logger.info("=" * 70)
-            self.logger.info("RetroVision Edge Service - INICIANDO (FASE 1.2)")
-            self.logger.info("Captura de video + Detección YOLOv8")
+            self.logger.info("RetroVision Edge Service - INICIANDO (FASE 5)")
+            self.logger.info("Tracking + ROI Colas + Heatmaps")
             self.logger.info("=" * 70)
             
             # Inicializar pipeline de detección
@@ -102,19 +78,22 @@ class EdgeServiceRunner:
                 target_fps=self.config.video.fps,
                 model_name="yolov8n.pt",  # Nano model para Edge
                 confidence_threshold=0.5,
-                draw_detections=True,  # Dibujar bounding boxes
+                draw_detections=True,  # Dibujar bounding boxes e IDs
                 mqtt_enabled=self.config.mqtt.enabled,
                 mqtt_broker_host=self.config.mqtt.broker_host,
                 mqtt_broker_port=self.config.mqtt.broker_port,
                 mqtt_client_id=self.config.mqtt.client_id,
                 mqtt_topic=self.config.mqtt.topic,
+                mqtt_telemetry_topic=self.config.mqtt.telemetry_topic,
+                roi_polygon=self.config.mqtt.roi_polygon,
+                queue_wait_threshold=self.config.mqtt.queue_wait_threshold,
                 mqtt_keep_alive=self.config.mqtt.keep_alive,
                 camera_id=self.config.mqtt.camera_id,
             )
             
             self.pipeline.start()
             self.logger.info(
-                "Iniciando detección (presiona 'q' para salir)..."
+                "Iniciando detección y telemetría (presiona 'q' para salir)..."
             )
             
             # Loop principal de procesamiento
@@ -181,4 +160,3 @@ class EdgeServiceRunner:
 if __name__ == '__main__':
     runner = EdgeServiceRunner()
     runner.run()
-

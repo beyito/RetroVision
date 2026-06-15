@@ -48,6 +48,7 @@ class Detection:
     confidence: float
     class_id: int
     class_name: str
+    track_id: Optional[int] = None
     # Landmarks result from posture estimator: list of (x_abs, y_abs, visibility)
     landmarks: Optional[List[Tuple[int, int, float]]] = None
     # Risk score from BehaviorAnalyzer (0.0-1.0)
@@ -216,8 +217,9 @@ class ObjectDetector:
             import time
             start_time = time.perf_counter()
             
-            results = self._model.predict(
+            results = self._model.track(
                 source=frame,
+                persist=True,
                 conf=self.confidence_threshold,
                 verbose=False,  # No imprimir en console
                 device=self.device,
@@ -280,6 +282,14 @@ class ObjectDetector:
                 coords, frame_shape
             )
             
+            # Obtener ID de track si existe
+            track_id = None
+            if box.id is not None:
+                try:
+                    track_id = int(box.id[0].cpu().numpy())
+                except Exception:
+                    pass
+            
             detection = Detection(
                 x1=int(x1),
                 y1=int(y1),
@@ -290,6 +300,7 @@ class ObjectDetector:
                 class_name=self.COCO_CLASSES.get(
                     class_id, "unknown"
                 ),
+                track_id=track_id,
             )
             
             detections.append(detection)
@@ -356,7 +367,10 @@ class ObjectDetector:
             )
             
             # Preparar texto con clase y confianza
-            label = f"{detection.class_name} {detection.confidence:.2f}"
+            if detection.track_id is not None:
+                label = f"ID: {detection.track_id} | {detection.class_name} {detection.confidence:.2f}"
+            else:
+                label = f"{detection.class_name} {detection.confidence:.2f}"
             
             # Obtener tamaño del texto para background
             text_size = cv2.getTextSize(

@@ -3,8 +3,9 @@ import axios from 'axios';
 import {
   ShieldAlert, Video, Activity, RefreshCw, Search, Filter,
   Clock, Camera, AlertTriangle, Eye, ShieldCheck, Volume2, VolumeX,
-  Play, Calendar, Info
+  Play, Calendar, Info, BarChart2
 } from 'lucide-react';
+import AnalyticsPanel from './AnalyticsPanel';
 
 export default function Dashboard() {
   const [alerts, setAlerts] = useState([]);
@@ -19,6 +20,7 @@ export default function Dashboard() {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [flashScreen, setFlashScreen] = useState(false);
   const [token, setToken] = useState(null);
+  const [activeTab, setActiveTab] = useState('security'); // 'security' | 'analytics'
 
   const prevAlertsCountRef = useRef(0);
   const audioContextRef = useRef(null);
@@ -221,9 +223,29 @@ export default function Dashboard() {
 
       {/* Header and Controls Row */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-6 bg-[#0f1524]/60 border border-gray-800 p-4 rounded-xl">
-        <div className="flex items-center gap-2">
-          <Activity className="w-5 h-5 text-cyan-400 animate-pulse" />
-          <h2 className="text-md font-bold text-white uppercase tracking-wider m-0">Monitoreo de Seguridad</h2>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setActiveTab('security')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-bold transition-all cursor-pointer ${
+              activeTab === 'security'
+                ? 'bg-cyan-950/40 border-cyan-500 text-cyan-400'
+                : 'bg-transparent border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            Seguridad (Alertas WS)
+          </button>
+          <button
+            onClick={() => setActiveTab('analytics')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-bold transition-all cursor-pointer ${
+              activeTab === 'analytics'
+                ? 'bg-indigo-950/40 border-indigo-500 text-indigo-400'
+                : 'bg-transparent border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            <BarChart2 className="w-4 h-4" />
+            Analítica Comercial
+          </button>
         </div>
         <div className="flex items-center gap-3">
           {/* WS Connection Indicator */}
@@ -263,8 +285,10 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Dashboard KPI Grid inside Component */}
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+      {activeTab === 'security' ? (
+        <>
+          {/* Dashboard KPI Grid inside Component */}
+          <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="bg-[#0f1524]/60 border border-gray-800 rounded-xl p-4 relative overflow-hidden">
           <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Alarmas Activas</p>
           <h3 className="text-2xl font-black text-white mt-1 font-mono">{totalAlerts}</h3>
@@ -560,6 +584,10 @@ export default function Dashboard() {
         </div>
 
       </section>
+        </>
+      ) : (
+        <AnalyticsPanel token={token} />
+      )}
 
     </div>
   );

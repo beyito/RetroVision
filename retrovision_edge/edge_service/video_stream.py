@@ -13,7 +13,8 @@ Arquitectura:
 
 import cv2
 import logging
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Optional, Tuple, Union
 from dataclasses import dataclass
 from datetime import datetime
 import threading
@@ -37,14 +38,15 @@ class VideoStreamProcessor:
     Procesador de flujo de video del microservicio Edge.
     
     Responsabilidades:
-    - Inicializar y gestionar conexión a cámara local
+    - Inicializar y gestionar conexión a webcam, stream RTSP o archivo
     - Capturar frames de manera eficiente
     - Mantener metadatos de cada frame
     - Manejar errores y excepciones robustamente
     - Proveer salida limpia de recursos
     
     Attributes:
-        camera_index: Índice de la cámara (0 = cámara por defecto)
+        camera_index: Índice de la cámara (compatibilidad hacia atrás)
+        video_source: Fuente de video normalizada (webcam, RTSP o archivo)
         frame_width: Ancho del frame en píxeles
         frame_height: Alto del frame en píxeles
         target_fps: FPS objetivo de captura
@@ -53,6 +55,7 @@ class VideoStreamProcessor:
     def __init__(
         self,
         camera_index: int = 0,
+        video_source: Optional[Union[int, str]] = None,
         frame_width: int = 1280,
         frame_height: int = 720,
         target_fps: int = 30,
@@ -63,6 +66,10 @@ class VideoStreamProcessor:
         
         Args:
             camera_index: Índice de la cámara a usar (default: 0)
+            video_source: Fuente de video. Puede ser:
+                - int: webcam local
+                - str RTSP: rtsp://...
+                - str path: ruta a archivo de video
             frame_width: Ancho deseado del frame (default: 1280)
             frame_height: Alto deseado del frame (default: 720)
             target_fps: FPS objetivo (default: 30)
@@ -74,6 +81,9 @@ class VideoStreamProcessor:
         self.logger = logging.getLogger(self.__class__.__name__)
         
         self.camera_index = camera_index
+        self.video_source = self._normalize_video_source(
+            video_source if video_source is not None else camera_index
+        )
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.target_fps = target_fps
@@ -86,50 +96,94 @@ class VideoStreamProcessor:
         self._lock = threading.Lock()
         
         self._initialize_camera()
+
+    @staticmethod
+    def _normalize_video_source(video_source: Union[int, str]) -> Union[int, str]:
+        """Normaliza la fuente de video manteniendo compatibilidad con webcam local."""
+        if isinstance(video_source, int):
+            return video_source
+
+        normalized = str(video_source).strip()
+        if normalized == "":
+            return 0
+
+        try:
+            return int(normalized)
+        except ValueError:
+            return normalized
+
+    def _describe_video_source(self) -> str:
+        """Retorna una descripción legible de la fuente configurada."""
+        if isinstance(self.video_source, int):
+            return f"webcam local (índice {self.video_source})"
+
+        lower_source = self.video_source.lower()
+        if lower_source.startswith("rtsp://"):
+            return f"stream RTSP ({self.video_source})"
+
+        return f"archivo de video ({self.video_source})"
     
     def _initialize_camera(self) -> None:
         """
-        Inicializa la captura de video desde la cámara.
+        Inicializa la captura de video desde la fuente configurada.
         
         Raises:
-            CameraInitializationError: Si no se puede acceder a la cámara
+            CameraInitializationError: Si no se puede acceder a la fuente
         """
         try:
-            self.logger.info(
-                f"Inicializando cámara con índice {self.camera_index}..."
-            )
+            source_description = self._describe_video_source()
+            self.logger.info(f"Inicializando fuente de video: {source_description}...")
             
-            self._capture = cv2.VideoCapture(self.camera_index)
+            self._capture = cv2.VideoCapture(self.video_source)
             
             if not self._capture or not self._capture.isOpened():
                 raise CameraInitializationError(
-                    f"No se pudo abrir la cámara con índice {self.camera_index}. "
-                    f"Verifica que la cámara esté conectada y disponible."
+                    f"No se pudo abrir la fuente de video configurada: {source_description}. "
+                    "Verifica que la webcam, stream RTSP o archivo estén disponibles."
                 )
             
-            # Configurar propiedades de la cámara
-            self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-            self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-            self._capture.set(cv2.CAP_PROP_FPS, self.target_fps)
+            # Configurar propiedades cuando la fuente es webcam o RTSP.
+            # En archivos, OpenCV puede ignorar estas propiedades o romper el timing natural.
+            if not self._is_video_file_source():
+                self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
+                self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+                self._capture.set(cv2.CAP_PROP_FPS, self.target_fps)
             self._capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimizar lag
             
-            # Validar que se configuró correctamente
             actual_width = int(self._capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(self._capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
             actual_fps = self._capture.get(cv2.CAP_PROP_FPS)
             
             self.logger.info(
-                f"Cámara inicializada exitosamente. "
+                f"Fuente de video inicializada exitosamente. "
                 f"Resolución: {actual_width}x{actual_height}, FPS: {actual_fps:.2f}"
             )
             
         except CameraInitializationError:
             raise
         except Exception as e:
-            self.logger.error(f"Error inesperado al inicializar cámara: {e}")
+            self.logger.error(f"Error inesperado al inicializar la fuente de video: {e}")
             raise CameraInitializationError(
-                f"Error al inicializar cámara: {str(e)}"
+                f"Error al inicializar fuente de video: {str(e)}"
             ) from e
+
+    def _is_video_file_source(self) -> bool:
+        """Retorna True si la fuente parece ser un archivo de video local."""
+        if isinstance(self.video_source, int):
+            return False
+
+        lower_source = self.video_source.lower()
+        if lower_source.startswith(("rtsp://", "http://", "https://")):
+            return False
+
+        return Path(self.video_source).suffix.lower() in {
+            ".mp4",
+            ".avi",
+            ".mov",
+            ".mkv",
+            ".wmv",
+            ".m4v",
+        }
     
     def read_frame(self) -> Tuple[bool, Optional[bytes], Optional[FrameMetadata]]:
         """
@@ -145,14 +199,14 @@ class VideoStreamProcessor:
             CameraAccessError: Si hay error al acceder a la cámara
         """
         if not self._capture or not self._capture.isOpened():
-            raise CameraAccessError("La cámara no está inicializada")
+            raise CameraAccessError("La fuente de video no está inicializada")
         
         try:
             with self._lock:
                 success, frame = self._capture.read()
             
             if not success or frame is None:
-                self.logger.warning("No se pudo leer frame de la cámara")
+                self.logger.warning("No se pudo leer frame de la fuente de video")
                 return False, None, None
             
             # Redimensionar si es necesario (para asegurar dimensiones deseadas)
@@ -250,6 +304,7 @@ class VideoStreamProcessor:
             return {
                 'total_frames': self._frame_count,
                 'camera_index': self.camera_index,
+                'video_source': self.video_source,
                 'resolution': f"{self.frame_width}x{self.frame_height}",
                 'target_fps': self.target_fps,
             }

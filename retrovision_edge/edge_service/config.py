@@ -8,13 +8,14 @@ Maneja variables de entorno y parámetros del sistema.
 import os
 import json
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
 
 @dataclass
 class VideoConfig:
     """Configuración de captura de video."""
     camera_index: int = 0
+    video_source: Union[int, str] = 0
     frame_width: int = 1280
     frame_height: int = 720
     fps: int = 30
@@ -56,10 +57,36 @@ class LoggingConfig:
 class EdgeServiceConfig:
     """Clase principal de configuración. Gestiona todas las secciones."""
 
+    @staticmethod
+    def _parse_video_source(raw_value: Optional[str], fallback_camera_index: int) -> Union[int, str]:
+        """
+        Normaliza la fuente de video desde variables de entorno.
+
+        Reglas:
+        - Si no existe VIDEO_SOURCE, usa CAMERA_INDEX para mantener compatibilidad.
+        - Si VIDEO_SOURCE es un entero, se interpreta como índice de webcam.
+        - En otro caso se trata como URL RTSP o ruta de archivo.
+        """
+        if raw_value is None or raw_value.strip() == "":
+            return fallback_camera_index
+
+        normalized = raw_value.strip()
+        try:
+            return int(normalized)
+        except ValueError:
+            return normalized
+
     def __init__(self):
         """Inicializa la configuración desde variables de entorno."""
+        camera_index = int(os.getenv('CAMERA_INDEX', 0))
+        video_source = self._parse_video_source(
+            os.getenv('VIDEO_SOURCE'),
+            fallback_camera_index=camera_index,
+        )
+
         self.video = VideoConfig(
-            camera_index=int(os.getenv('CAMERA_INDEX', 0)),
+            camera_index=camera_index,
+            video_source=video_source,
             frame_width=int(os.getenv('FRAME_WIDTH', 1280)),
             frame_height=int(os.getenv('FRAME_HEIGHT', 720)),
             fps=int(os.getenv('FPS', 30)),
@@ -105,6 +132,9 @@ class EdgeServiceConfig:
         """
         if self.video.camera_index < 0:
             raise ValueError("camera_index debe ser >= 0")
+
+        if isinstance(self.video.video_source, int) and self.video.video_source < 0:
+            raise ValueError("video_source no puede ser un índice negativo")
         
         if self.video.frame_width <= 0 or self.video.frame_height <= 0:
             raise ValueError("Dimensiones de frame deben ser positivas")

@@ -7,7 +7,7 @@ BehaviorAnalyzer, RingBuffer, AlertWriter y AlertPublisher.
 """
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 from dataclasses import dataclass
 import time
 import cv2
@@ -48,6 +48,7 @@ class DetectionPipeline:
     def __init__(
         self,
         camera_index: int = 0,
+        video_source: Optional[Union[int, str]] = None,
         frame_width: int = 1280,
         frame_height: int = 720,
         target_fps: int = 30,
@@ -71,6 +72,7 @@ class DetectionPipeline:
         self.logger = logging.getLogger(self.__class__.__name__)
         
         self.camera_index = camera_index
+        self.video_source = video_source if video_source is not None else camera_index
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.target_fps = target_fps
@@ -137,6 +139,7 @@ class DetectionPipeline:
             # Inicializar video processor
             self._video_processor = VideoStreamProcessor(
                 camera_index=self.camera_index,
+                video_source=self.video_source,
                 frame_width=self.frame_width,
                 frame_height=self.frame_height,
                 target_fps=self.target_fps,

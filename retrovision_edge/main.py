@@ -73,6 +73,7 @@ class EdgeServiceRunner:
             # Inicializar pipeline de detección
             self.pipeline = DetectionPipeline(
                 camera_index=self.config.video.camera_index,
+                video_source=self.config.video.video_source,
                 frame_width=self.config.video.frame_width,
                 frame_height=self.config.video.frame_height,
                 target_fps=self.config.video.fps,

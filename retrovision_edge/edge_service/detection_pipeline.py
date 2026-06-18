@@ -7,6 +7,7 @@ BehaviorAnalyzer, RingBuffer, AlertWriter y AlertPublisher.
 """
 
 import logging
+import threading
 from typing import Optional, Tuple, Union
 from dataclasses import dataclass
 import time
@@ -63,6 +64,13 @@ class DetectionPipeline:
         mqtt_telemetry_topic: str = "retrovision/telemetry",
         roi_polygon: Optional[list] = None,
         queue_wait_threshold: float = 5.0,
+        queue_roi_polygon: Optional[list] = None,
+        queue_dwell_seconds: float = 2.0,
+        queue_alert_people_threshold: int = 3,
+        queue_alert_duration_seconds: float = 5.0,
+        max_allowed_wait_seconds: float = 120.0,
+        cashier_count: int = 1,
+        service_rate_per_cashier_per_minute: float = 12.0,
         mqtt_keep_alive: int = 60,
         camera_id: str = "camera-01",
     ) -> None:
@@ -82,11 +90,20 @@ class DetectionPipeline:
         # Phase 5 properties
         self.roi_polygon = roi_polygon or [[500, 350], [900, 350], [1100, 650], [400, 650]]
         self.queue_wait_threshold = queue_wait_threshold
+        self.queue_roi_polygon = queue_roi_polygon or self.roi_polygon
+        self.queue_dwell_seconds = queue_dwell_seconds
+        self.queue_alert_people_threshold = queue_alert_people_threshold
+        self.queue_alert_duration_seconds = queue_alert_duration_seconds
+        self.max_allowed_wait_seconds = max_allowed_wait_seconds
+        self.cashier_count = max(1, cashier_count)
+        self.service_rate_per_cashier_per_minute = max(0.1, service_rate_per_cashier_per_minute)
         
         # Trajectory trail history: track_id -> list of centroids
         self.trajectory_history = {}
         # Entry time in ROI: track_id -> float timestamp
         self.roi_entry_times = {}
+        self.queue_candidate_since = {}
+        self.queue_alert_started_at = None
         # Last seen time: track_id -> float timestamp
         self.last_seen_time = {}
         
@@ -101,6 +118,7 @@ class DetectionPipeline:
         self.heatmap_accumulator = np.zeros((frame_height, frame_width), dtype=np.float32)
         # ROI numpy polygon
         self.roi_poly_np = np.array(self.roi_polygon, dtype=np.int32).reshape((-1, 1, 2))
+        self.queue_roi_poly_np = np.array(self.queue_roi_polygon, dtype=np.int32).reshape((-1, 1, 2))
         
         self._mqtt_config = {
             "enabled": mqtt_enabled,
@@ -122,6 +140,9 @@ class DetectionPipeline:
         self._stats = PipelineStats()
         self._inference_times = []
         self._is_running = False
+        self._latest_frame_lock = threading.Lock()
+        self._latest_frame_jpeg: Optional[bytes] = None
+        self._latest_raw_frame_jpeg: Optional[bytes] = None
         
         self._initialize_pipeline(model_name, confidence_threshold)
     
@@ -301,11 +322,11 @@ class DetectionPipeline:
             detected_track_ids = set()
 
             # Draw ROI Queue Area polygon
-            cv2.polylines(frame_to_display, [self.roi_poly_np], isClosed=True, color=(0, 165, 255), thickness=2)
+            cv2.polylines(frame_to_display, [self.queue_roi_poly_np], isClosed=True, color=(0, 165, 255), thickness=2)
             cv2.putText(
                 frame_to_display,
                 "ROI COLA",
-                (self.roi_polygon[0][0], self.roi_polygon[0][1] - 10),
+                (self.queue_roi_polygon[0][0], self.queue_roi_polygon[0][1] - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 (0, 165, 255),
@@ -341,14 +362,16 @@ class DetectionPipeline:
                             cv2.line(frame_to_display, trail[i-1], trail[i], (255, 0, 0), 2)  # Blue line
 
                     # 2. Check if inside ROI polygon
-                    inside = cv2.pointPolygonTest(self.roi_poly_np, (float(cx), float(cy)), False) >= 0
+                    inside = cv2.pointPolygonTest(self.queue_roi_poly_np, (float(cx), float(cy)), False) >= 0
                     if inside:
+                        if tid not in self.queue_candidate_since:
+                            self.queue_candidate_since[tid] = current_time
                         if tid not in self.roi_entry_times:
-                            self.roi_entry_times[tid] = current_time
+                            self.roi_entry_times[tid] = self.queue_candidate_since[tid]
                         
-                        elapsed = current_time - self.roi_entry_times[tid]
+                        elapsed = current_time - self.queue_candidate_since[tid]
                         # Draw warning text on frame if waiting > threshold
-                        if elapsed >= self.queue_wait_threshold:
+                        if elapsed >= self.queue_dwell_seconds:
                             cv2.putText(
                                 frame_to_display,
                                 f"ID {tid} ESPERA: {elapsed:.1f}s",
@@ -359,6 +382,8 @@ class DetectionPipeline:
                                 2,
                             )
                     else:
+                        if tid in self.queue_candidate_since:
+                            self.queue_candidate_since.pop(tid)
                         if tid in self.roi_entry_times:
                             self.roi_entry_times.pop(tid)
 
@@ -373,6 +398,8 @@ class DetectionPipeline:
                     self.last_seen_time.pop(tid)
                     if tid in self.trajectory_history:
                         self.trajectory_history.pop(tid)
+                    if tid in self.queue_candidate_since:
+                        self.queue_candidate_since.pop(tid)
                     if tid in self.roi_entry_times:
                         self.roi_entry_times.pop(tid)
                     self.personas_salientes_count += 1
@@ -389,11 +416,47 @@ class DetectionPipeline:
                 roi_waits = []
                 for tid, entry_time in list(self.roi_entry_times.items()):
                     elapsed = current_time - entry_time
-                    if elapsed >= self.queue_wait_threshold:
+                    if elapsed >= self.queue_dwell_seconds:
                         roi_waits.append(elapsed)
                 
                 personas_en_cola = len(roi_waits)
                 tiempo_espera_promedio = sum(roi_waits) / personas_en_cola if personas_en_cola > 0 else 0.0
+                capacidad_personas_por_minuto = self.cashier_count * self.service_rate_per_cashier_per_minute
+                tiempo_espera_estimado = (
+                    (personas_en_cola / capacidad_personas_por_minuto) * 60.0
+                    if capacidad_personas_por_minuto > 0
+                    else 0.0
+                )
+                presion_cola_ratio = (
+                    tiempo_espera_estimado / self.max_allowed_wait_seconds
+                    if self.max_allowed_wait_seconds > 0
+                    else 0.0
+                )
+                alert_conditions = []
+                if personas_en_cola >= self.queue_alert_people_threshold:
+                    alert_conditions.append(
+                        f"cola>= {self.queue_alert_people_threshold} personas"
+                    )
+                if tiempo_espera_promedio >= self.max_allowed_wait_seconds:
+                    alert_conditions.append(
+                        f"espera_promedio>= {self.max_allowed_wait_seconds:.0f}s"
+                    )
+                if tiempo_espera_estimado >= self.max_allowed_wait_seconds:
+                    alert_conditions.append(
+                        f"espera_estimada>= {self.max_allowed_wait_seconds:.0f}s"
+                    )
+
+                if alert_conditions:
+                    if self.queue_alert_started_at is None:
+                        self.queue_alert_started_at = current_time
+                else:
+                    self.queue_alert_started_at = None
+
+                alerta_cola_activa = (
+                    self.queue_alert_started_at is not None
+                    and (current_time - self.queue_alert_started_at) >= self.queue_alert_duration_seconds
+                )
+                motivo_alerta_cola = " | ".join(alert_conditions) if alerta_cola_activa else ""
                 
                 if self._alert_publisher is not None:
                     self._alert_publisher.publish_telemetry(
@@ -402,6 +465,10 @@ class DetectionPipeline:
                         personas_salientes=self.personas_salientes_count,
                         personas_en_cola=personas_en_cola,
                         tiempo_espera_promedio=tiempo_espera_promedio,
+                        tiempo_espera_estimado=tiempo_espera_estimado,
+                        presion_cola_ratio=presion_cola_ratio,
+                        alerta_cola_activa=alerta_cola_activa,
+                        motivo_alerta_cola=motivo_alerta_cola,
                         heatmap_points=self.recent_heatmap_points,
                     )
                 
@@ -410,9 +477,13 @@ class DetectionPipeline:
 
             # --- END PHASE 5 ---
 
+            self._update_latest_raw_frame(frame)
+
             # 5. Guardar frame en ring buffer (FASE 2)
             if self._ring_buffer is not None:
                 self._ring_buffer.add_frame(frame)
+
+            self._update_latest_frame(frame_to_display)
             
             # 6. Analizar riesgo por cada detección (FASE 2)
             if self._behavior_analyzer is not None and self._alert_writer is not None:
@@ -526,6 +597,24 @@ class DetectionPipeline:
         )
         
         cv2.imshow(window_name, frame)
+
+    def _update_latest_frame(self, frame: np.ndarray) -> None:
+        success, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not success:
+            return
+        with self._latest_frame_lock:
+            self._latest_frame_jpeg = encoded.tobytes()
+
+    def _update_latest_raw_frame(self, frame: np.ndarray) -> None:
+        success, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not success:
+            return
+        with self._latest_frame_lock:
+            self._latest_raw_frame_jpeg = encoded.tobytes()
+
+    def get_latest_frame_jpeg(self) -> Optional[bytes]:
+        with self._latest_frame_lock:
+            return self._latest_raw_frame_jpeg or self._latest_frame_jpeg
     
     def get_stats(self) -> PipelineStats:
         """Retorna estadísticas del pipeline."""

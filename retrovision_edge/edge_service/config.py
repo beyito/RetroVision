@@ -43,6 +43,13 @@ class MQTTConfig:
     telemetry_topic: str = "retrovision/telemetry"
     roi_polygon: list = None
     queue_wait_threshold: float = 5.0
+    queue_roi_polygon: list = None
+    queue_dwell_seconds: float = 2.0
+    queue_alert_people_threshold: int = 3
+    queue_alert_duration_seconds: float = 5.0
+    max_allowed_wait_seconds: float = 120.0
+    cashier_count: int = 1
+    service_rate_per_cashier_per_minute: float = 12.0
     keep_alive: int = 60
     enabled: bool = True
 
@@ -67,6 +74,14 @@ class BackendApiConfig:
     token: str = ""
     timeout_seconds: int = 10
     sync_camera_config: bool = False
+
+
+@dataclass
+class ControlApiConfig:
+    """Configuración HTTP local del edge para snapshots y control liviano."""
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = 8081
 
 
 class EdgeServiceConfig:
@@ -118,6 +133,12 @@ class EdgeServiceConfig:
         except Exception:
             roi_poly = [[500, 350], [900, 350], [1100, 650], [400, 650]]
 
+        queue_roi_env = os.getenv('QUEUE_ROI_POLYGON', roi_env)
+        try:
+            queue_roi_poly = json.loads(queue_roi_env)
+        except Exception:
+            queue_roi_poly = roi_poly
+
         self.mqtt = MQTTConfig(
             broker_host=os.getenv('MQTT_BROKER_HOST', 'localhost'),
             broker_port=int(os.getenv('MQTT_BROKER_PORT', 1883)),
@@ -127,6 +148,13 @@ class EdgeServiceConfig:
             telemetry_topic=os.getenv('MQTT_TELEMETRY_TOPIC', 'retrovision/telemetry'),
             roi_polygon=roi_poly,
             queue_wait_threshold=float(os.getenv('QUEUE_WAIT_THRESHOLD', 5.0)),
+            queue_roi_polygon=queue_roi_poly,
+            queue_dwell_seconds=float(os.getenv('QUEUE_DWELL_SECONDS', 2.0)),
+            queue_alert_people_threshold=int(os.getenv('QUEUE_ALERT_PEOPLE_THRESHOLD', 3)),
+            queue_alert_duration_seconds=float(os.getenv('QUEUE_ALERT_DURATION_SECONDS', 5.0)),
+            max_allowed_wait_seconds=float(os.getenv('MAX_ALLOWED_WAIT_SECONDS', 120.0)),
+            cashier_count=int(os.getenv('CASHIER_COUNT', 1)),
+            service_rate_per_cashier_per_minute=float(os.getenv('SERVICE_RATE_PER_CASHIER_PER_MINUTE', 12.0)),
             keep_alive=int(os.getenv('MQTT_KEEP_ALIVE', 60)),
             enabled=os.getenv('MQTT_ENABLED', 'true').lower() == 'true',
         )
@@ -145,6 +173,12 @@ class EdgeServiceConfig:
             token=os.getenv('BACKEND_API_TOKEN', ''),
             timeout_seconds=int(os.getenv('BACKEND_API_TIMEOUT', 10)),
             sync_camera_config=os.getenv('SYNC_CAMERA_CONFIG', 'false').lower() == 'true',
+        )
+
+        self.control_api = ControlApiConfig(
+            enabled=os.getenv('CONTROL_API_ENABLED', 'true').lower() == 'true',
+            host=os.getenv('CONTROL_API_HOST', '0.0.0.0'),
+            port=int(os.getenv('CONTROL_API_PORT', 8081)),
         )
 
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
@@ -175,10 +209,31 @@ class EdgeServiceConfig:
             remote_roi = remote_profile.get("roi_polygon")
             if isinstance(remote_roi, list) and remote_roi:
                 self.mqtt.roi_polygon = remote_roi
+            remote_queue_roi = remote_profile.get("queue_roi_polygon")
+            if isinstance(remote_queue_roi, list) and remote_queue_roi:
+                self.mqtt.queue_roi_polygon = remote_queue_roi
 
             remote_wait = remote_profile.get("queue_wait_threshold")
             if remote_wait is not None:
                 self.mqtt.queue_wait_threshold = float(remote_wait)
+            remote_dwell = remote_profile.get("queue_dwell_seconds")
+            if remote_dwell is not None:
+                self.mqtt.queue_dwell_seconds = float(remote_dwell)
+            remote_people_threshold = remote_profile.get("queue_alert_people_threshold")
+            if remote_people_threshold is not None:
+                self.mqtt.queue_alert_people_threshold = int(remote_people_threshold)
+            remote_alert_duration = remote_profile.get("queue_alert_duration_seconds")
+            if remote_alert_duration is not None:
+                self.mqtt.queue_alert_duration_seconds = float(remote_alert_duration)
+            remote_max_wait = remote_profile.get("max_allowed_wait_seconds")
+            if remote_max_wait is not None:
+                self.mqtt.max_allowed_wait_seconds = float(remote_max_wait)
+            remote_cashier_count = remote_profile.get("cashier_count")
+            if remote_cashier_count is not None:
+                self.mqtt.cashier_count = int(remote_cashier_count)
+            remote_service_rate = remote_profile.get("service_rate_per_cashier_per_minute")
+            if remote_service_rate is not None:
+                self.mqtt.service_rate_per_cashier_per_minute = float(remote_service_rate)
         except Exception:
             # El edge debe seguir funcionando aunque el backend no responda.
             return

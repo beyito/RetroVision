@@ -115,6 +115,10 @@ class Command(BaseCommand):
                 personas_salientes = int(payload.get("personas_salientes", 0))
                 personas_en_cola = int(payload.get("personas_en_cola", 0))
                 tiempo_espera_promedio = float(payload.get("tiempo_espera_promedio", 0.0))
+                tiempo_espera_estimado = float(payload.get("tiempo_espera_estimado", 0.0))
+                presion_cola_ratio = float(payload.get("presion_cola_ratio", 0.0))
+                alerta_cola_activa = bool(payload.get("alerta_cola_activa", False))
+                motivo_alerta_cola = str(payload.get("motivo_alerta_cola", ""))
                 
                 telemetry = Telemetria_Afluencia.objects.create(
                     timestamp=timestamp,
@@ -123,6 +127,10 @@ class Command(BaseCommand):
                     personas_salientes=personas_salientes,
                     personas_en_cola=personas_en_cola,
                     tiempo_espera_promedio=tiempo_espera_promedio,
+                    tiempo_espera_estimado=tiempo_espera_estimado,
+                    presion_cola_ratio=presion_cola_ratio,
+                    alerta_cola_activa=alerta_cola_activa,
+                    motivo_alerta_cola=motivo_alerta_cola,
                 )
                 LOGGER.info("Telemetria_Afluencia saved id=%s camera_id=%s", telemetry.id, telemetry.camera_id)
                 

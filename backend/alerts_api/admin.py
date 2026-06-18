@@ -21,9 +21,9 @@ class StoreAdmin(admin.ModelAdmin):
 
 @admin.register(EdgeNode)
 class EdgeNodeAdmin(admin.ModelAdmin):
-    list_display = ("node_id", "display_name", "store", "is_active", "updated_at")
+    list_display = ("node_id", "display_name", "store", "control_api_base_url", "is_active", "updated_at")
     list_filter = ("store", "is_active")
-    search_fields = ("node_id", "display_name", "store__name", "store__tenant__name")
+    search_fields = ("node_id", "display_name", "control_api_base_url", "store__name", "store__tenant__name")
     readonly_fields = ("api_key",)
 
 

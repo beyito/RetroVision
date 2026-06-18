@@ -275,6 +275,9 @@ class DetectionPipeline:
                 # Luego, para cada detección, intentar estimar postura y dibujar
                 if self._posture_estimator is not None:
                     for det in detection_result.detections:
+                        # Si es un arma blanca (knife, scissors), no calculamos landmarks ni postura
+                        if det.class_name in ("knife", "scissors"):
+                            continue
                         try:
                             x1, y1, x2, y2 = det.x1, det.y1, det.x2, det.y2
 
@@ -335,6 +338,9 @@ class DetectionPipeline:
 
             # Process trajectories, ROI and heatmap coordinates
             for det in detection_result.detections:
+                # Omitir armas blancas de las métricas comerciales y flujo espacial
+                if det.class_name in ("knife", "scissors"):
+                    continue
                 cx, cy = det.center()
                 
                 # Accumulate recent coordinates for database heatmap matrix
@@ -489,6 +495,14 @@ class DetectionPipeline:
             if self._behavior_analyzer is not None and self._alert_writer is not None:
                 high_risk_detected = False
                 for det in detection_result.detections:
+                    if det.class_name in ("knife", "scissors"):
+                        # Forzar risk_score de arma blanca al 95% o la confianza (lo que sea mayor)
+                        det.risk_score = max(0.95, det.confidence)
+                        high_risk_detected = True
+                        self.logger.warning(
+                            f"ALERTA CRÍTICA: Arma blanca detectada ({det.class_name}) con probabilidad {det.confidence:.2f}"
+                        )
+                        continue
                     try:
                         analysis = self._behavior_analyzer.analyze(det.landmarks)
                         det.risk_score = analysis.risk_score
@@ -508,12 +522,14 @@ class DetectionPipeline:
                         frames_to_save = self._ring_buffer.get_frames()
                         if frames_to_save:
                             max_risk = max(det.risk_score for det in detection_result.detections)
-                            rules = list(set(
-                                rule
-                                for det in detection_result.detections
-                                for _ in ([1] if det.risk_score > 0.7 else [])
-                                for rule in self._behavior_analyzer.analyze(det.landmarks).rules_triggered
-                            ))
+                            rules = []
+                            for det in detection_result.detections:
+                                if det.risk_score > 0.7:
+                                    if det.class_name in ("knife", "scissors"):
+                                        rules.append("Presencia de Arma Blanca")
+                                    elif det.landmarks:
+                                        rules.extend(self._behavior_analyzer.analyze(det.landmarks).rules_triggered)
+                            rules = list(set(rules))
                             
                             video_path = self._alert_writer.write_alert_async(
                                 frames_to_save,

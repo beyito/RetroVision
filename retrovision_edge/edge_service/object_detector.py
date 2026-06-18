@@ -114,12 +114,11 @@ class ObjectDetector:
         device: Dispositivo de ejecución ('cpu', 'gpu', 'mps')
     """
     
-    # Mapeo de clases COCO (solo nos interesa persona=0)
+    # Mapeo de clases COCO (solo nos interesa persona=0, cuchillo=43 y tijeras=76)
     COCO_CLASSES = {
         0: "person",
-        1: "bicycle",
-        2: "car",
-        # ... otros no relevantes para esta fase
+        43: "knife",
+        76: "scissors",
     }
     
     # Solo detectar personas
@@ -217,10 +216,15 @@ class ObjectDetector:
             import time
             start_time = time.perf_counter()
             
+            # Ejecutar track con un umbral bajo de confianza para capturar armas,
+            # luego aplicaremos el umbral dinámico por clase en _process_results.
+            # conf_val = min(0.25, self.confidence_threshold)
+            conf_val = 0.10
+
             results = self._model.track(
                 source=frame,
                 persist=True,
-                conf=self.confidence_threshold,
+                conf=conf_val,
                 verbose=False,  # No imprimir en console
                 device=self.device,
             )
@@ -273,9 +277,17 @@ class ObjectDetector:
             confidence = float(box.conf[0].cpu().numpy())
             class_id = int(box.cls[0].cpu().numpy())
             
-            # FILTRO: Solo personas (clase 0 en COCO)
-            if class_id != self.TARGET_CLASS_ID:
+            # FILTRO: Aceptamos personas (0), cuchillos (43) y tijeras (76)
+            if class_id not in self.COCO_CLASSES:
                 continue
+            
+            # Aplicar umbral de confianza específico por clase
+            if class_id == 0:
+                if confidence < self.confidence_threshold:
+                    continue
+            else:
+                if confidence < 0.10:
+                    continue
             
             # Convertir coordenadas a enteros y validar límites
             x1, y1, x2, y2 = self._validate_coordinates(
@@ -357,12 +369,15 @@ class ObjectDetector:
         frame_copy = frame.copy()
         
         for detection in detections:
+            # Color dinámico: rojo para armas (knife, scissors), color estándar (verde) para personas
+            det_color = (0, 0, 255) if detection.class_name in ("knife", "scissors") else color
+
             # Dibujar rectángulo
             cv2.rectangle(
                 frame_copy,
                 (detection.x1, detection.y1),
                 (detection.x2, detection.y2),
-                color,
+                det_color,
                 thickness,
             )
             
@@ -382,7 +397,7 @@ class ObjectDetector:
                 frame_copy,
                 (detection.x1, detection.y1 - text_size[1] - 4),
                 (detection.x1 + text_size[0], detection.y1),
-                color,
+                det_color,
                 -1,  # Relleno
             )
             
@@ -399,7 +414,7 @@ class ObjectDetector:
             
             # Opcional: Dibujar punto en el centro
             cx, cy = detection.center()
-            cv2.circle(frame_copy, (cx, cy), 3, color, -1)
+            cv2.circle(frame_copy, (cx, cy), 3, det_color, -1)
         
         return frame_copy
     

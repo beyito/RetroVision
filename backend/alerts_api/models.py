@@ -49,7 +49,7 @@ class EdgeNode(models.Model):
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name="edge_nodes")
     node_id = models.CharField(max_length=128, unique=True, db_index=True)
     display_name = models.CharField(max_length=128, blank=True, default="")
-    control_api_base_url = models.CharField(max_length=255, blank=True, default="")
+    control_api_base_url = models.CharField(max_length=255, blank=True, default="http://host.docker.internal:8081")
     api_key = models.CharField(max_length=128, unique=True, editable=False, default=generate_api_key)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -1,56 +1,809 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
+import {
+  Activity,
+  Building2,
+  Camera,
+  Cpu,
+  LogOut,
+  Shield,
+  Store,
+  Users,
+} from 'lucide-react';
+
 import Dashboard from './Dashboard';
-import AnalyticsPanel from './AnalyticsPanel';
-import { Activity } from 'lucide-react';
+import { API_BASE_URL } from './config';
 
-function App() {
+const AUTH_STORAGE_KEY = 'retrovision_auth';
+const VIEW_STORAGE_KEY = 'retrovision_active_view';
+
+const ROLE_LABELS = {
+  ADMIN_SOFTWARE: 'Administrador General',
+  ADMIN_EMPRESA: 'Administrador de Empresa',
+  SEGURIDAD: 'Seguridad',
+};
+
+
+function apiHeaders(token) {
+  return { Authorization: `Bearer ${token}` };
+}
+
+
+function extractApiError(error, fallbackMessage) {
+  const payload = error?.response?.data;
+  if (!payload) {
+    return fallbackMessage;
+  }
+
+  if (typeof payload === 'string') {
+    return payload;
+  }
+
+  if (Array.isArray(payload)) {
+    return payload.join(' ');
+  }
+
+  const fragments = Object.entries(payload).flatMap(([key, value]) => {
+    if (Array.isArray(value)) {
+      return `${key}: ${value.join(', ')}`;
+    }
+    if (typeof value === 'string') {
+      return `${key}: ${value}`;
+    }
+    return [];
+  });
+
+  return fragments.length > 0 ? fragments.join(' | ') : fallbackMessage;
+}
+
+
+function ScopeBadge({ profile }) {
+  const scopeText = profile?.tenant_name
+    ? profile.store_name
+      ? `${profile.tenant_name} / ${profile.store_name}`
+      : profile.tenant_name
+    : 'Acceso global';
+
   return (
-    <div className="min-h-screen bg-[#0b0f19] text-gray-100 flex flex-col">
-      {/* Brand Header */}
-      <header className="border-b border-gray-800/85 bg-[#0f1524]/80 backdrop-blur-md sticky top-0 z-40 px-6 py-4">
-        <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-tr from-cyan-500 to-indigo-600 p-2.5 rounded-xl shadow-lg shadow-indigo-500/20">
-              <Activity className="w-6 h-6 text-white animate-pulse" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black tracking-tight bg-gradient-to-r from-white via-gray-200 to-gray-400 bg-clip-text text-transparent m-0 flex items-center">
-                RetroVision 
-                <span className="text-cyan-400 font-mono text-[10px] border border-cyan-400/30 px-2 py-0.5 rounded-full ml-2">CORE PLATFORM</span>
-              </h1>
-              <p className="text-[10px] text-gray-400 mt-0.5">Sistema Distribuido de Videovigilancia y Analítica IA de Tiendas</p>
-            </div>
-          </div>
-          <div className="text-xs text-gray-500 font-mono">
-            Feria Tecnológica • Versión 1.2.0
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content Layout - Side-by-Side Grid */}
-      <main className="max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1">
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
-          
-          {/* Dashboard (Alerts & Inspector) - Left Column taking 8/12 cols */}
-          <div className="xl:col-span-8 w-full">
-            <Dashboard />
-          </div>
-
-          {/* Analytics Panel - Right Column taking 4/12 cols */}
-          <div className="xl:col-span-4 w-full">
-            <AnalyticsPanel />
-          </div>
-
-        </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-gray-800 bg-[#0f1524]/40 py-6 text-center text-xs text-gray-500">
-        <p>RetroVision Security Systems © 2026. Proyecto Diseñado para la Feria Tecnológica.</p>
-        <p className="mt-1 font-mono text-[9px]">Edge + Central Server + Real-time WebSockets & Analytics</p>
-      </footer>
+    <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-xs text-cyan-100">
+      <p className="font-semibold uppercase tracking-[0.22em] text-cyan-300">Alcance</p>
+      <p className="mt-1 text-sm font-medium text-white">{scopeText}</p>
     </div>
   );
 }
 
-export default App;
+
+function LoginScreen({ credentials, onChange, onSubmit, loading, error }) {
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(6,182,212,0.18),_transparent_35%),linear-gradient(180deg,#07111e_0%,#0b0f19_100%)] text-gray-100 flex items-center justify-center px-6 py-10">
+      <div className="w-full max-w-5xl grid lg:grid-cols-[1.15fr_0.85fr] gap-8">
+        <section className="rounded-[32px] border border-white/10 bg-[#0d1627]/80 backdrop-blur-xl p-8 shadow-[0_30px_100px_rgba(0,0,0,0.45)]">
+          <div className="inline-flex items-center gap-3 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
+            <Activity className="h-4 w-4" />
+            RetroVision Control Center
+          </div>
+          <h1 className="mt-8 max-w-xl text-4xl font-black tracking-tight text-white sm:text-5xl">
+            Una sola plataforma para operar tiendas, cámaras y alertas en tiempo real.
+          </h1>
+          <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300">
+            La misma aplicación sirve para el administrador general, el administrador de cada empresa y el equipo de seguridad.
+            El menú y el alcance cambian según el usuario autenticado.
+          </p>
+
+          <div className="mt-10 grid gap-4 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/8 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Multi-tenant</p>
+              <p className="mt-2 text-lg font-bold text-white">Tenants y tiendas</p>
+              <p className="mt-1 text-xs text-slate-400">Aislamiento por empresa y sucursal.</p>
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Edge</p>
+              <p className="mt-2 text-lg font-bold text-white">Nodos y camaras</p>
+              <p className="mt-1 text-xs text-slate-400">Configuracion y ROI por camera_id.</p>
+            </div>
+            <div className="rounded-2xl border border-white/8 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Operacion</p>
+              <p className="mt-2 text-lg font-bold text-white">Alertas y analitica</p>
+              <p className="mt-1 text-xs text-slate-400">Seguridad y negocio en la misma vista.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[32px] border border-white/10 bg-[#101726]/90 p-8 shadow-[0_30px_100px_rgba(0,0,0,0.45)]">
+          <h2 className="text-2xl font-black text-white">Iniciar sesion</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Usa tus credenciales de Django. El panel se adapta al rol asignado en backend.
+          </p>
+
+          <form onSubmit={onSubmit} className="mt-8 space-y-5">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Usuario</label>
+              <input
+                value={credentials.username}
+                onChange={(event) => onChange('username', event.target.value)}
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0a1220] px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
+                placeholder="admin"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Contrasena</label>
+              <input
+                type="password"
+                value={credentials.password}
+                onChange={(event) => onChange('password', event.target.value)}
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0a1220] px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
+                placeholder="********"
+              />
+            </div>
+
+            {error && (
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition hover:bg-cyan-400 disabled:opacity-60"
+            >
+              {loading ? 'Ingresando...' : 'Entrar al sistema'}
+            </button>
+          </form>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+
+function ManagementSection({
+  title,
+  subtitle,
+  items,
+  columns,
+  formFields,
+  formState,
+  onChange,
+  onSubmit,
+  onSelectItem,
+  selectedItemKey,
+  onReset,
+  onDelete,
+  isEditing,
+}) {
+  return (
+    <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
+      <section className="rounded-[28px] border border-white/10 bg-[#0f1524]/80 p-6">
+        <h3 className="text-lg font-black text-white">{title}</h3>
+        <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
+        <div className="mt-6 overflow-hidden rounded-2xl border border-white/8">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-white/5 text-slate-400">
+              <tr>
+                {columns.map((column) => (
+                  <th key={column.key} className="px-4 py-3 font-semibold uppercase tracking-[0.16em] text-[11px]">
+                    {column.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={columns.length} className="px-4 py-6 text-center text-slate-500">
+                    No hay registros visibles para este usuario.
+                  </td>
+                </tr>
+              ) : (
+                items.map((item) => (
+                  <tr
+                    key={item.id || item.camera_id || item.node_id || item.slug || item.code}
+                    className={`border-t border-white/6 text-slate-200 cursor-pointer transition ${
+                      selectedItemKey === (item.id || item.camera_id || item.node_id || item.slug || item.code)
+                        ? 'bg-cyan-500/10'
+                        : 'hover:bg-white/5'
+                    }`}
+                    onClick={() => onSelectItem(item)}
+                  >
+                    {columns.map((column) => (
+                      <td key={column.key} className="px-4 py-3 align-top">
+                        {column.render ? column.render(item) : item[column.key] ?? '-'}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="rounded-[28px] border border-white/10 bg-[#121b2f]/80 p-6">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-lg font-black text-white">{isEditing ? 'Editar registro' : 'Crear nuevo'}</h3>
+          {isEditing && (
+            <button
+              type="button"
+              onClick={onReset}
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-200"
+            >
+              Nuevo
+            </button>
+          )}
+        </div>
+        <form onSubmit={onSubmit} className="mt-5 space-y-4">
+          {formFields.map((field) => (
+            <div key={field.name}>
+              <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                {field.label}
+              </label>
+              {field.type === 'select' ? (
+                <select
+                  value={formState[field.name] ?? ''}
+                  onChange={(event) => onChange(field.name, event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0a1220] px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
+                >
+                  <option value="">Selecciona</option>
+                  {field.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={field.type || 'text'}
+                  value={formState[field.name] ?? ''}
+                  onChange={(event) => onChange(field.name, event.target.value)}
+                  placeholder={field.placeholder}
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0a1220] px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
+                />
+              )}
+            </div>
+          ))}
+
+          <button
+            type="submit"
+            className="w-full rounded-2xl bg-white px-4 py-3 text-sm font-black uppercase tracking-[0.18em] text-slate-950 transition hover:bg-slate-200"
+          >
+            {isEditing ? 'Guardar cambios' : 'Guardar registro'}
+          </button>
+          {isEditing && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="w-full rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-black uppercase tracking-[0.18em] text-red-200 transition hover:bg-red-500/20"
+            >
+              Eliminar registro
+            </button>
+          )}
+        </form>
+      </section>
+    </div>
+  );
+}
+
+
+function AdminConsole({ token, profile, onRequestRefresh }) {
+  const [activeModule, setActiveModule] = useState('tenants');
+  const [datasets, setDatasets] = useState({
+    tenants: [],
+    stores: [],
+    edgeNodes: [],
+    cameras: [],
+  });
+  const [forms, setForms] = useState({
+    tenants: { name: '', slug: '' },
+    stores: { tenant: '', name: '', code: '', address: '' },
+    edgeNodes: { store: '', node_id: '', display_name: '' },
+    cameras: { store: '', edge_node: '', camera_id: '', display_name: '', queue_wait_threshold: '5', video_source: '' },
+  });
+  const [selectedRecords, setSelectedRecords] = useState({
+    tenants: null,
+    stores: null,
+    edgeNodes: null,
+    cameras: null,
+  });
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const canManageTenants = profile?.role === 'ADMIN_SOFTWARE';
+  const canManageStructure = profile?.role === 'ADMIN_SOFTWARE' || profile?.role === 'ADMIN_EMPRESA';
+
+  const fetchAdminData = async () => {
+    if (!token) return;
+    try {
+      const cacheBust = Date.now();
+      const requests = [
+        axios.get(`${API_BASE_URL}/api/stores/?_=${cacheBust}`, { headers: apiHeaders(token) }),
+        axios.get(`${API_BASE_URL}/api/edge-nodes/?_=${cacheBust}`, { headers: apiHeaders(token) }),
+        axios.get(`${API_BASE_URL}/api/cameras/?_=${cacheBust}`, { headers: apiHeaders(token) }),
+      ];
+
+      if (canManageTenants) {
+        requests.unshift(axios.get(`${API_BASE_URL}/api/tenants/?_=${cacheBust}`, { headers: apiHeaders(token) }));
+      }
+
+      const responses = await Promise.all(requests);
+      const offset = canManageTenants ? 1 : 0;
+      setDatasets({
+        tenants: canManageTenants ? responses[0].data : [],
+        stores: responses[offset].data,
+        edgeNodes: responses[offset + 1].data,
+        cameras: responses[offset + 2].data,
+      });
+      setError('');
+    } catch (fetchError) {
+      console.error(fetchError);
+      setError(extractApiError(fetchError, 'No se pudieron cargar los modulos administrativos.'));
+    }
+  };
+
+  useEffect(() => {
+    fetchAdminData();
+  }, [token, profile?.role]);
+
+  const handleFormChange = (section, field, value) => {
+    setForms((previous) => ({
+      ...previous,
+      [section]: {
+        ...previous[section],
+        [field]: value,
+      },
+    }));
+  };
+
+  const resetSectionForm = (section) => {
+    const defaults = {
+      tenants: { name: '', slug: '' },
+      stores: { tenant: '', name: '', code: '', address: '' },
+      edgeNodes: { store: '', node_id: '', display_name: '' },
+      cameras: { store: '', edge_node: '', camera_id: '', display_name: '', queue_wait_threshold: '5', video_source: '' },
+    };
+    setForms((previous) => ({ ...previous, [section]: defaults[section] }));
+    setSelectedRecords((previous) => ({ ...previous, [section]: null }));
+  };
+
+  const selectRecord = (section, item) => {
+    setSelectedRecords((previous) => ({ ...previous, [section]: item }));
+    if (section === 'tenants') {
+      setForms((previous) => ({ ...previous, tenants: { name: item.name || '', slug: item.slug || '' } }));
+    }
+    if (section === 'stores') {
+      setForms((previous) => ({
+        ...previous,
+        stores: {
+          tenant: item.tenant ? String(item.tenant) : '',
+          name: item.name || '',
+          code: item.code || '',
+          address: item.address || '',
+        },
+      }));
+    }
+    if (section === 'edgeNodes') {
+      setForms((previous) => ({
+        ...previous,
+        edgeNodes: {
+          store: item.store ? String(item.store) : '',
+          node_id: item.node_id || '',
+          display_name: item.display_name || '',
+        },
+      }));
+    }
+    if (section === 'cameras') {
+      setForms((previous) => ({
+        ...previous,
+        cameras: {
+          store: item.store ? String(item.store) : '',
+          edge_node: item.edge_node ? String(item.edge_node) : '',
+          camera_id: item.camera_id || '',
+          display_name: item.display_name || '',
+          queue_wait_threshold: String(item.queue_wait_threshold ?? '5'),
+          video_source: item.video_source || '',
+        },
+      }));
+    }
+  };
+
+  const createRecord = async (path, payload, section, resetState) => {
+    try {
+      await axios.post(`${API_BASE_URL}${path}`, payload, { headers: apiHeaders(token) });
+      setForms((previous) => ({ ...previous, [section]: resetState }));
+      setMessage('Registro creado correctamente.');
+      setError('');
+      fetchAdminData();
+      onRequestRefresh?.();
+    } catch (createError) {
+      console.error(createError);
+      setError(extractApiError(createError, 'No se pudo guardar el registro. Revisa permisos y datos.'));
+    }
+  };
+
+  const updateRecord = async (path, payload, section) => {
+    try {
+      await axios.patch(`${API_BASE_URL}${path}`, payload, { headers: apiHeaders(token) });
+      setMessage('Registro actualizado correctamente.');
+      setError('');
+      resetSectionForm(section);
+      fetchAdminData();
+      onRequestRefresh?.();
+    } catch (updateError) {
+      console.error(updateError);
+      setError(extractApiError(updateError, 'No se pudo actualizar el registro.'));
+    }
+  };
+
+  const deleteRecord = async (path, section) => {
+    try {
+      await axios.delete(`${API_BASE_URL}${path}`, { headers: apiHeaders(token) });
+      setMessage('Registro eliminado correctamente.');
+      setError('');
+      resetSectionForm(section);
+      fetchAdminData();
+      onRequestRefresh?.();
+    } catch (deleteError) {
+      console.error(deleteError);
+      setError(extractApiError(deleteError, 'No se pudo eliminar el registro.'));
+    }
+  };
+
+  const modules = [
+    canManageTenants && { key: 'tenants', label: 'Tenants', icon: Building2 },
+    canManageStructure && { key: 'stores', label: 'Tiendas', icon: Store },
+    canManageStructure && { key: 'edgeNodes', label: 'Nodos Edge', icon: Cpu },
+    canManageStructure && { key: 'cameras', label: 'Camaras', icon: Camera },
+  ].filter(Boolean);
+
+  const storeOptions = datasets.stores.map((store) => ({ value: store.id, label: `${store.tenant_name || 'Tenant'} / ${store.name}` }));
+  const tenantOptions = datasets.tenants.map((tenant) => ({ value: tenant.id, label: tenant.name }));
+  const edgeNodeOptions = datasets.edgeNodes.map((edgeNode) => ({ value: edgeNode.id, label: edgeNode.display_name || edgeNode.node_id }));
+
+  const sectionConfig = {
+    tenants: {
+      title: 'Tenants',
+      subtitle: 'Empresas cliente registradas en la plataforma.',
+      items: datasets.tenants,
+      columns: [
+        { key: 'name', label: 'Nombre' },
+        { key: 'slug', label: 'Slug' },
+        { key: 'is_active', label: 'Activo', render: (item) => (item.is_active ? 'Si' : 'No') },
+      ],
+      fields: [
+        { name: 'name', label: 'Nombre' },
+        { name: 'slug', label: 'Slug' },
+      ],
+      submit: (event) => {
+        event.preventDefault();
+        if (selectedRecords.tenants) {
+          updateRecord(`/api/tenants/${selectedRecords.tenants.id}/`, forms.tenants, 'tenants');
+          return;
+        }
+        createRecord('/api/tenants/', forms.tenants, 'tenants', { name: '', slug: '' });
+      },
+      deleteAction: () => deleteRecord(`/api/tenants/${selectedRecords.tenants.id}/`, 'tenants'),
+    },
+    stores: {
+      title: 'Tiendas',
+      subtitle: 'Sucursales visibles segun el alcance del usuario.',
+      items: datasets.stores,
+      columns: [
+        { key: 'tenant_name', label: 'Tenant' },
+        { key: 'name', label: 'Tienda' },
+        { key: 'code', label: 'Codigo' },
+      ],
+      fields: [
+        ...(canManageTenants ? [{ name: 'tenant', label: 'Tenant', type: 'select', options: tenantOptions }] : []),
+        { name: 'name', label: 'Nombre' },
+        { name: 'code', label: 'Codigo' },
+        { name: 'address', label: 'Direccion' },
+      ],
+      submit: (event) => {
+        event.preventDefault();
+        const payload = {
+          ...forms.stores,
+          tenant: canManageTenants ? forms.stores.tenant : profile.tenant,
+        };
+        if (selectedRecords.stores) {
+          updateRecord(`/api/stores/${selectedRecords.stores.id}/`, payload, 'stores');
+          return;
+        }
+        createRecord('/api/stores/', payload, 'stores', { tenant: '', name: '', code: '', address: '' });
+      },
+      deleteAction: () => deleteRecord(`/api/stores/${selectedRecords.stores.id}/`, 'stores'),
+    },
+    edgeNodes: {
+      title: 'Nodos Edge',
+      subtitle: 'Dispositivos autorizados para sincronizar configuracion y reportar camaras.',
+      items: datasets.edgeNodes,
+      columns: [
+        { key: 'tenant_name', label: 'Tenant' },
+        { key: 'store_name', label: 'Tienda' },
+        { key: 'node_id', label: 'Node ID' },
+        { key: 'api_key', label: 'API Key' },
+      ],
+      fields: [
+        { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
+        { name: 'node_id', label: 'Node ID' },
+        { name: 'display_name', label: 'Nombre visible' },
+      ],
+      submit: (event) => {
+        event.preventDefault();
+        if (selectedRecords.edgeNodes) {
+          updateRecord(`/api/edge-nodes/${selectedRecords.edgeNodes.id}/`, forms.edgeNodes, 'edgeNodes');
+          return;
+        }
+        createRecord('/api/edge-nodes/', forms.edgeNodes, 'edgeNodes', { store: '', node_id: '', display_name: '' });
+      },
+      deleteAction: () => deleteRecord(`/api/edge-nodes/${selectedRecords.edgeNodes.id}/`, 'edgeNodes'),
+    },
+    cameras: {
+      title: 'Camaras',
+      subtitle: 'Catalogo central de camaras, ROI y configuracion operativa.',
+      items: datasets.cameras,
+      columns: [
+        { key: 'tenant_name', label: 'Tenant' },
+        { key: 'store_name', label: 'Tienda' },
+        { key: 'camera_id', label: 'Camera ID' },
+        { key: 'edge_node_name', label: 'Edge Node' },
+      ],
+      fields: [
+        { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
+        { name: 'edge_node', label: 'Nodo Edge', type: 'select', options: edgeNodeOptions },
+        { name: 'camera_id', label: 'Camera ID' },
+        { name: 'display_name', label: 'Nombre visible' },
+        { name: 'video_source', label: 'Video source' },
+        { name: 'queue_wait_threshold', label: 'Threshold cola (s)', type: 'number' },
+      ],
+      submit: (event) => {
+        event.preventDefault();
+        const payload = { ...forms.cameras, queue_wait_threshold: Number(forms.cameras.queue_wait_threshold || 5) };
+        if (selectedRecords.cameras) {
+          updateRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, payload, 'cameras');
+          return;
+        }
+        createRecord('/api/cameras/', payload, 'cameras', { store: '', edge_node: '', camera_id: '', display_name: '', queue_wait_threshold: '5', video_source: '' });
+      },
+      deleteAction: () => deleteRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, 'cameras'),
+    },
+  };
+
+  const activeSection = sectionConfig[activeModule];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-6 xl:grid-cols-[0.78fr_1.22fr]">
+        <section className="rounded-[28px] border border-white/10 bg-[#0f1524]/80 p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300">Consola Administrativa</p>
+          <h2 className="mt-3 text-3xl font-black text-white">Gestion estructural por rol</h2>
+          <p className="mt-3 text-sm leading-7 text-slate-400">
+            La misma app muestra opciones distintas segun el usuario autenticado. El backend tambien filtra el alcance.
+          </p>
+          <div className="mt-6">
+            <ScopeBadge profile={profile} />
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-white/10 bg-[#121b2f]/80 p-6">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Modulos administrativos</p>
+            <button
+              type="button"
+              onClick={fetchAdminData}
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-200"
+            >
+              Recargar
+            </button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {modules.map((module) => {
+              const Icon = module.icon;
+              const isActive = activeModule === module.key;
+              return (
+                <button
+                  key={module.key}
+                  type="button"
+                  onClick={() => setActiveModule(module.key)}
+                  className={`rounded-2xl border p-4 text-left transition ${isActive ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/8 bg-white/5 hover:border-white/20'}`}
+                >
+                  <Icon className={`h-5 w-5 ${isActive ? 'text-cyan-300' : 'text-slate-400'}`} />
+                  <p className="mt-4 text-sm font-black uppercase tracking-[0.18em] text-white">{module.label}</p>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+
+      {message && <div className="rounded-2xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-sm text-green-200">{message}</div>}
+      {error && <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
+
+      {activeSection && (
+        <ManagementSection
+          title={activeSection.title}
+          subtitle={activeSection.subtitle}
+          items={activeSection.items}
+          columns={activeSection.columns}
+          formFields={activeSection.fields}
+          formState={forms[activeModule]}
+          onChange={(field, value) => handleFormChange(activeModule, field, value)}
+          onSubmit={activeSection.submit}
+          onSelectItem={(item) => selectRecord(activeModule, item)}
+          selectedItemKey={selectedRecords[activeModule]?.id || selectedRecords[activeModule]?.camera_id || selectedRecords[activeModule]?.node_id || selectedRecords[activeModule]?.slug || selectedRecords[activeModule]?.code}
+          onReset={() => resetSectionForm(activeModule)}
+          onDelete={() => {
+            if (selectedRecords[activeModule] && window.confirm('Esta accion eliminara el registro seleccionado. Deseas continuar?')) {
+              activeSection.deleteAction();
+            }
+          }}
+          isEditing={Boolean(selectedRecords[activeModule])}
+        />
+      )}
+    </div>
+  );
+}
+
+
+export default function App() {
+  const [credentials, setCredentials] = useState({ username: '', password: '' });
+  const [auth, setAuth] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : { token: '', refresh: '' };
+    } catch {
+      return { token: '', refresh: '' };
+    }
+  });
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [activeView, setActiveView] = useState(() => window.localStorage.getItem(VIEW_STORAGE_KEY) || 'operations');
+
+  const roleLabel = useMemo(() => ROLE_LABELS[profile?.role] || 'Usuario', [profile]);
+  const canManageAdmin = profile?.role === 'ADMIN_SOFTWARE' || profile?.role === 'ADMIN_EMPRESA';
+
+  const handleCredentialsChange = (field, value) => {
+    setCredentials((previous) => ({ ...previous, [field]: value }));
+  };
+
+  const loadProfile = async (accessToken) => {
+    const response = await axios.get(`${API_BASE_URL}/api/accounts/me/`, {
+      headers: apiHeaders(accessToken),
+    });
+    setProfile(response.data);
+  };
+
+  useEffect(() => {
+    if (!auth.token) {
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+  }, [auth]);
+
+  useEffect(() => {
+    window.localStorage.setItem(VIEW_STORAGE_KEY, activeView);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (!auth.token || profile) return;
+
+    const bootstrapProfile = async () => {
+      try {
+        await loadProfile(auth.token);
+      } catch (bootstrapError) {
+        console.error(bootstrapError);
+        setAuth({ token: '', refresh: '' });
+        setProfile(null);
+        setAuthError('Tu sesion expiro. Vuelve a iniciar sesion.');
+      }
+    };
+
+    bootstrapProfile();
+  }, [auth.token, profile]);
+
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/token/`, credentials);
+      const nextAuth = { token: response.data.access, refresh: response.data.refresh };
+      setAuth(nextAuth);
+      await loadProfile(nextAuth.token);
+      setAuthError('');
+    } catch (loginError) {
+      console.error(loginError);
+      setAuthError('Credenciales invalidas o backend no disponible.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setAuth({ token: '', refresh: '' });
+    setProfile(null);
+    setActiveView('operations');
+    setCredentials({ username: '', password: '' });
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  };
+
+  if (!auth.token || !profile) {
+    return (
+      <LoginScreen
+        credentials={credentials}
+        onChange={handleCredentialsChange}
+        onSubmit={handleLogin}
+        loading={loading}
+        error={authError}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.09),_transparent_30%),linear-gradient(180deg,#09101d_0%,#0b0f19_100%)] text-gray-100">
+      <header className="border-b border-gray-800/85 bg-[#0f1524]/80 backdrop-blur-md sticky top-0 z-40 px-6 py-4">
+        <div className="max-w-[1600px] mx-auto flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-gradient-to-tr from-cyan-500 to-emerald-500 p-2.5 rounded-2xl shadow-lg shadow-cyan-500/20">
+              <Shield className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black tracking-tight text-white">RetroVision Unified Console</h1>
+              <p className="text-[11px] text-gray-400">Operacion y administracion multi-tenant desde una sola interfaz.</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+              <p className="font-semibold text-white">{profile.username}</p>
+              <p className="text-xs text-slate-400">{roleLabel}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveView('operations')}
+              className={`rounded-2xl px-4 py-3 text-xs font-black uppercase tracking-[0.18em] ${activeView === 'operations' ? 'bg-cyan-500 text-slate-950' : 'bg-white/5 text-white'}`}
+            >
+              Operacion
+            </button>
+            {canManageAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveView('admin')}
+                className={`rounded-2xl px-4 py-3 text-xs font-black uppercase tracking-[0.18em] ${activeView === 'admin' ? 'bg-white text-slate-950' : 'bg-white/5 text-white'}`}
+              >
+                Administracion
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs font-black uppercase tracking-[0.18em] text-white"
+            >
+              <span className="inline-flex items-center gap-2">
+                <LogOut className="h-4 w-4" />
+                Salir
+              </span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {activeView === 'admin' && canManageAdmin ? (
+          <AdminConsole token={auth.token} profile={profile} onRequestRefresh={() => {}} />
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+            <div className="xl:col-span-12">
+              <Dashboard token={auth.token} profile={profile} />
+            </div>
+          </div>
+        )}
+      </main>
+
+      <footer className="border-t border-gray-800 bg-[#0f1524]/40 py-6 text-center text-xs text-gray-500">
+        <p>RetroVision Security Systems © 2026</p>
+        <p className="mt-1 font-mono text-[10px]">Multi-tenant admin + Edge operations + live analytics</p>
+      </footer>
+    </div>
+  );
+}

@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass
 from typing import Optional, Union
 
+from .camera_config_client import CameraConfigClient
+
 
 @dataclass
 class VideoConfig:
@@ -52,6 +54,19 @@ class LoggingConfig:
     log_file: str = "logs/edge_service.log"
     max_bytes: int = 10 * 1024 * 1024  # 10 MB
     backup_count: int = 5
+
+
+@dataclass
+class BackendApiConfig:
+    """Configuración para sincronizar perfiles de cámara con el backend."""
+    base_url: str = "http://localhost:8000"
+    edge_node_id: str = ""
+    edge_api_key: str = ""
+    username: str = ""
+    password: str = ""
+    token: str = ""
+    timeout_seconds: int = 10
+    sync_camera_config: bool = False
 
 
 class EdgeServiceConfig:
@@ -121,7 +136,52 @@ class EdgeServiceConfig:
             log_file=os.getenv('LOG_FILE', 'logs/edge_service.log'),
         )
 
+        self.backend_api = BackendApiConfig(
+            base_url=os.getenv('BACKEND_API_BASE_URL', 'http://localhost:8000'),
+            edge_node_id=os.getenv('EDGE_NODE_ID', ''),
+            edge_api_key=os.getenv('EDGE_API_KEY', ''),
+            username=os.getenv('BACKEND_API_USERNAME', ''),
+            password=os.getenv('BACKEND_API_PASSWORD', ''),
+            token=os.getenv('BACKEND_API_TOKEN', ''),
+            timeout_seconds=int(os.getenv('BACKEND_API_TIMEOUT', 10)),
+            sync_camera_config=os.getenv('SYNC_CAMERA_CONFIG', 'false').lower() == 'true',
+        )
+
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
+        self._apply_remote_camera_profile()
+
+    def _apply_remote_camera_profile(self) -> None:
+        """Sobrescribe la configuración local con el perfil de cámara remoto si está habilitado."""
+        if not self.backend_api.sync_camera_config:
+            return
+
+        if not self.mqtt.camera_id:
+            return
+
+        try:
+            client = CameraConfigClient(
+                base_url=self.backend_api.base_url,
+                edge_node_id=self.backend_api.edge_node_id,
+                edge_api_key=self.backend_api.edge_api_key,
+                token=self.backend_api.token,
+                username=self.backend_api.username,
+                password=self.backend_api.password,
+                timeout_seconds=self.backend_api.timeout_seconds,
+            )
+            remote_profile = client.get_camera_profile(self.mqtt.camera_id)
+            if not remote_profile:
+                return
+
+            remote_roi = remote_profile.get("roi_polygon")
+            if isinstance(remote_roi, list) and remote_roi:
+                self.mqtt.roi_polygon = remote_roi
+
+            remote_wait = remote_profile.get("queue_wait_threshold")
+            if remote_wait is not None:
+                self.mqtt.queue_wait_threshold = float(remote_wait)
+        except Exception:
+            # El edge debe seguir funcionando aunque el backend no responda.
+            return
 
     def validate(self) -> None:
         """

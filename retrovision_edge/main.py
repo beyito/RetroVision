@@ -5,14 +5,17 @@ Punto de entrada para el microservicio Edge.
 FASE 5: Analítica Espacial Compleja, Tracking, ROI y Heatmaps.
 """
 
+import argparse
 import sys
 import logging
 import signal
 import cv2
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Agregar el directorio padre al path para imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+EDGE_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(EDGE_ROOT.parent))
 
 from edge_service import (
     DetectionPipeline,
@@ -24,13 +27,53 @@ from edge_service import (
 from edge_service.logger_config import setup_logger
 
 
+def parse_args() -> argparse.Namespace:
+    """Parsea argumentos de línea de comandos."""
+    parser = argparse.ArgumentParser(
+        description="RetroVision Edge Service",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=".env",
+        help=(
+            "Archivo .env a cargar antes de inicializar el servicio. "
+            "Puede ser relativo a retrovision_edge o una ruta absoluta."
+        ),
+    )
+    return parser.parse_args()
+
+
+def resolve_env_file(env_file_argument: str) -> Path:
+    """Resuelve la ruta del archivo .env desde el argumento recibido."""
+    candidate = Path(env_file_argument)
+    if candidate.is_absolute():
+        return candidate
+    return EDGE_ROOT / candidate
+
+
+def load_environment(env_file_argument: str) -> Path:
+    """
+    Carga variables de entorno desde el archivo indicado.
+
+    Si el archivo no existe, se continúa con variables del entorno del proceso
+    para mantener compatibilidad con ejecuciones existentes.
+    """
+    env_file_path = resolve_env_file(env_file_argument)
+    if env_file_path.exists():
+        load_dotenv(env_file_path, override=True)
+    else:
+        load_dotenv(EDGE_ROOT / ".env", override=False)
+    return env_file_path
+
+
 class EdgeServiceRunner:
     """
     Orquestador principal del microservicio Edge.
     """
     
-    def __init__(self) -> None:
+    def __init__(self, env_file_path: Path) -> None:
         """Inicializa el runner del Edge Service."""
+        self.env_file_path = env_file_path
         self.config = EdgeServiceConfig()
         self.config.validate()
         
@@ -68,6 +111,7 @@ class EdgeServiceRunner:
             self.logger.info("=" * 70)
             self.logger.info("RetroVision Edge Service - INICIANDO (FASE 5)")
             self.logger.info("Tracking + ROI Colas + Heatmaps")
+            self.logger.info(f"Configuración cargada desde: {self.env_file_path}")
             self.logger.info("=" * 70)
             
             # Inicializar pipeline de detección
@@ -159,5 +203,7 @@ class EdgeServiceRunner:
 
 
 if __name__ == '__main__':
-    runner = EdgeServiceRunner()
+    args = parse_args()
+    env_file_path = load_environment(args.env_file)
+    runner = EdgeServiceRunner(env_file_path=env_file_path)
     runner.run()

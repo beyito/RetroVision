@@ -8,6 +8,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, 
   CartesianGrid, Legend, ScatterChart, Scatter, ZAxis
 } from 'recharts';
+import { API_BASE_URL } from './config';
 
 export default function AnalyticsPanel({ token }) {
   const [telemetry, setTelemetry] = useState([]);
@@ -21,10 +22,10 @@ export default function AnalyticsPanel({ token }) {
     try {
       // Fetch both telemetry and heatmap data
       const [telemetryRes, heatmapsRes] = await Promise.all([
-        axios.get('http://localhost:8000/api/telemetry/', {
+        axios.get(`${API_BASE_URL}/api/telemetry/`, {
           headers: { Authorization: `Bearer ${token}` }
         }),
-        axios.get('http://localhost:8000/api/heatmaps/', {
+        axios.get(`${API_BASE_URL}/api/heatmaps/`, {
           headers: { Authorization: `Bearer ${token}` }
         })
       ]);

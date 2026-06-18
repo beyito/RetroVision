@@ -4,6 +4,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart2,
+  Building2,
   Camera,
   Clock,
   Play,
@@ -11,6 +12,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  Store,
   Video,
   Volume2,
   VolumeX,
@@ -27,20 +29,44 @@ export default function Dashboard({ token, profile }) {
   const [wsStatus, setWsStatus] = useState('DISCONNECTED');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRiskFilter, setSelectedRiskFilter] = useState('ALL');
-  const [selectedCameraFilter, setSelectedCameraFilter] = useState('ALL');
+  const [selectedTenantId, setSelectedTenantId] = useState('ALL');
+  const [selectedStoreId, setSelectedStoreId] = useState('ALL');
+  const [selectedCameraId, setSelectedCameraId] = useState('ALL');
   const [selectedAlert, setSelectedAlert] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [flashScreen, setFlashScreen] = useState(false);
   const [activeTab, setActiveTab] = useState('security');
+  const [scopeOptions, setScopeOptions] = useState({
+    tenants: [],
+    stores: [],
+    cameras: [],
+  });
 
   const wsRef = useRef(null);
   const isConnectingRef = useRef(false);
   const soundEnabledRef = useRef(soundEnabled);
   const audioContextRef = useRef(null);
 
+  const canFilterTenants = profile?.role === 'ADMIN_SOFTWARE';
+
   useEffect(() => {
     soundEnabledRef.current = soundEnabled;
   }, [soundEnabled]);
+
+  const buildQueryString = (includeCamera = true) => {
+    const params = new URLSearchParams();
+    if (selectedTenantId !== 'ALL') {
+      params.set('tenant', selectedTenantId);
+    }
+    if (selectedStoreId !== 'ALL') {
+      params.set('store', selectedStoreId);
+    }
+    if (includeCamera && selectedCameraId !== 'ALL') {
+      params.set('camera_id', selectedCameraId);
+    }
+    const query = params.toString();
+    return query ? `?${query}` : '';
+  };
 
   const playAlertSound = () => {
     try {
@@ -67,11 +93,45 @@ export default function Dashboard({ token, profile }) {
     }
   };
 
+  const fetchScopeOptions = async () => {
+    if (!token) return;
+    try {
+      const storeQuery = selectedTenantId !== 'ALL' ? `?tenant=${selectedTenantId}` : '';
+      const cameraQuery = buildQueryString(false);
+      const requests = [
+        axios.get(`${API_BASE_URL}/api/stores/${storeQuery}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        axios.get(`${API_BASE_URL}/api/cameras/${cameraQuery}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ];
+
+      if (canFilterTenants) {
+        requests.unshift(
+          axios.get(`${API_BASE_URL}/api/tenants/`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        );
+      }
+
+      const responses = await Promise.all(requests);
+      const offset = canFilterTenants ? 1 : 0;
+      setScopeOptions({
+        tenants: canFilterTenants ? responses[0].data : [],
+        stores: responses[offset].data,
+        cameras: responses[offset + 1].data,
+      });
+    } catch (scopeError) {
+      console.error('Fetch scope options failed:', scopeError);
+    }
+  };
+
   const fetchAlerts = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/alerts/`, {
+      const response = await axios.get(`${API_BASE_URL}/api/alerts/${buildQueryString(true)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setAlerts(response.data);
@@ -86,7 +146,20 @@ export default function Dashboard({ token, profile }) {
 
   useEffect(() => {
     fetchAlerts();
-  }, [token]);
+  }, [token, selectedTenantId, selectedStoreId, selectedCameraId]);
+
+  useEffect(() => {
+    fetchScopeOptions();
+  }, [token, selectedTenantId, selectedStoreId, profile?.role]);
+
+  useEffect(() => {
+    setSelectedStoreId('ALL');
+    setSelectedCameraId('ALL');
+  }, [selectedTenantId]);
+
+  useEffect(() => {
+    setSelectedCameraId('ALL');
+  }, [selectedStoreId]);
 
   useEffect(() => {
     let reconnectTimeout = null;
@@ -112,6 +185,18 @@ export default function Dashboard({ token, profile }) {
           if (payload.type !== 'new_alert') return;
 
           const newAlert = payload.alert;
+          const tenantMatches = selectedTenantId === 'ALL' || String(newAlert.tenant_name) === String(
+            scopeOptions.tenants.find((tenant) => String(tenant.id) === String(selectedTenantId))?.name || '',
+          );
+          const storeMatches = selectedStoreId === 'ALL' || String(newAlert.store_name) === String(
+            scopeOptions.stores.find((store) => String(store.id) === String(selectedStoreId))?.name || '',
+          );
+          const cameraMatches = selectedCameraId === 'ALL' || newAlert.camera_id === selectedCameraId;
+
+          if (!tenantMatches || !storeMatches || !cameraMatches) {
+            return;
+          }
+
           setAlerts((previous) => {
             if (previous.some((item) => item.id === newAlert.id)) {
               return previous;
@@ -152,24 +237,26 @@ export default function Dashboard({ token, profile }) {
         wsRef.current = null;
       }
     };
-  }, [token]);
+  }, [token, selectedTenantId, selectedStoreId, selectedCameraId, scopeOptions.tenants, scopeOptions.stores]);
 
   const filteredAlerts = alerts.filter((alert) => {
     const searchText = `${alert.camera_id} ${(alert.rules_triggered || []).join(' ')}`.toLowerCase();
     const matchesSearch = searchText.includes(searchTerm.toLowerCase());
-    const matchesCamera = selectedCameraFilter === 'ALL' || alert.camera_id === selectedCameraFilter;
     const matchesRisk =
       selectedRiskFilter === 'ALL' ||
       (selectedRiskFilter === 'CRITICAL' && alert.risk_score > 0.7) ||
       (selectedRiskFilter === 'WARNING' && alert.risk_score > 0.4 && alert.risk_score <= 0.7) ||
       (selectedRiskFilter === 'LOW' && alert.risk_score <= 0.4);
 
-    return matchesSearch && matchesCamera && matchesRisk;
+    return matchesSearch && matchesRisk;
   });
 
   const criticalAlerts = alerts.filter((alert) => alert.risk_score > 0.7);
   const warningAlerts = alerts.filter((alert) => alert.risk_score > 0.4 && alert.risk_score <= 0.7);
-  const uniqueCameras = ['ALL', ...new Set(alerts.map((alert) => alert.camera_id))];
+  const cameraOptions = scopeOptions.cameras.map((camera) => ({
+    value: camera.camera_id,
+    label: camera.display_name || camera.camera_id,
+  }));
 
   const formatTimestamp = (isoString) => {
     try {
@@ -236,6 +323,80 @@ export default function Dashboard({ token, profile }) {
         </div>
       </div>
 
+      <section className="bg-[#0f1524]/40 border border-gray-800/80 rounded-xl p-4 mb-6">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-300">Contexto operativo</p>
+            <p className="mt-1 text-xs text-slate-400">
+              {canFilterTenants
+                ? 'Acceso global con segmentacion por tenant, tienda y camara.'
+                : 'Vista acotada por tu alcance, con filtros adicionales de tienda y camara.'}
+            </p>
+          </div>
+
+          <div className={`grid w-full gap-3 ${canFilterTenants ? 'md:grid-cols-3' : 'md:grid-cols-2'} xl:w-auto`}>
+            {canFilterTenants && (
+              <label className="block">
+                <span className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Tenant
+                </span>
+                <select
+                  value={selectedTenantId}
+                  onChange={(event) => setSelectedTenantId(event.target.value)}
+                  className="w-full rounded-lg border border-gray-700 bg-[#0a0f1d] px-3 py-2 text-xs text-gray-200"
+                >
+                  <option value="ALL">Todos los tenants</option>
+                  {scopeOptions.tenants.map((tenant) => (
+                    <option key={tenant.id} value={tenant.id}>
+                      {tenant.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <label className="block">
+              <span className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                <Store className="h-3.5 w-3.5" />
+                Tienda
+              </span>
+              <select
+                value={selectedStoreId}
+                onChange={(event) => setSelectedStoreId(event.target.value)}
+                className="w-full rounded-lg border border-gray-700 bg-[#0a0f1d] px-3 py-2 text-xs text-gray-200"
+              >
+                <option value="ALL">Todas las tiendas</option>
+                {scopeOptions.stores.map((storeOption) => (
+                  <option key={storeOption.id} value={storeOption.id}>
+                    {storeOption.tenant_name ? `${storeOption.tenant_name} / ${storeOption.name}` : storeOption.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                <Camera className="h-3.5 w-3.5" />
+                Camara
+              </span>
+              <select
+                value={selectedCameraId}
+                onChange={(event) => setSelectedCameraId(event.target.value)}
+                className="w-full rounded-lg border border-gray-700 bg-[#0a0f1d] px-3 py-2 text-xs text-gray-200"
+              >
+                <option value="ALL">Todas las camaras</option>
+                {cameraOptions.map((camera) => (
+                  <option key={camera.value} value={camera.value}>
+                    {camera.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
+
       {error && (
         <div className="mb-6 p-4 bg-red-950/30 border border-red-900/50 rounded-xl flex items-start gap-3 text-red-300">
           <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
@@ -247,7 +408,12 @@ export default function Dashboard({ token, profile }) {
       )}
 
       {activeTab === 'analytics' ? (
-        <AnalyticsPanel token={token} profile={profile} />
+        <AnalyticsPanel
+          token={token}
+          selectedTenantId={selectedTenantId}
+          selectedStoreId={selectedStoreId}
+          selectedCameraId={selectedCameraId}
+        />
       ) : (
         <>
           <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -293,13 +459,14 @@ export default function Dashboard({ token, profile }) {
               </select>
 
               <select
-                value={selectedCameraFilter}
-                onChange={(event) => setSelectedCameraFilter(event.target.value)}
+                value={selectedCameraId}
+                onChange={(event) => setSelectedCameraId(event.target.value)}
                 className="bg-gray-900/60 p-2 rounded-lg border border-gray-800 text-gray-300"
               >
-                {uniqueCameras.map((cameraId) => (
-                  <option key={cameraId} value={cameraId}>
-                    {cameraId === 'ALL' ? 'Todas las camaras' : cameraId}
+                <option value="ALL">Todas las camaras</option>
+                {cameraOptions.map((camera) => (
+                  <option key={camera.value} value={camera.value}>
+                    {camera.label}
                   </option>
                 ))}
               </select>
@@ -334,8 +501,14 @@ export default function Dashboard({ token, profile }) {
                           <div className="flex flex-wrap items-center gap-2 text-[10px]">
                             <span className="flex items-center gap-1 text-gray-300 bg-gray-800 px-2 py-0.5 rounded font-mono font-semibold">
                               <Camera className="w-3 h-3 text-indigo-400" />
-                              {alert.camera_id}
+                              {alert.camera_display_name || alert.camera_id}
                             </span>
+                            {alert.tenant_name && (
+                              <span className="text-gray-400 font-mono">{alert.tenant_name}</span>
+                            )}
+                            {alert.store_name && (
+                              <span className="text-gray-500 font-mono">/ {alert.store_name}</span>
+                            )}
                             <span className="flex items-center gap-1 text-gray-400 font-mono">
                               <Clock className="w-3 h-3" />
                               {formatTimestamp(alert.timestamp)}
@@ -372,7 +545,7 @@ export default function Dashboard({ token, profile }) {
                 <div className="bg-[#0f1524]/85 border border-gray-800 rounded-2xl p-4 flex flex-col gap-4 shadow-lg">
                   <div className="flex justify-between items-center pb-2 border-b border-gray-800/80">
                     <div>
-                      <h4 className="font-extrabold text-white text-xs font-mono">CAMARA: {selectedAlert.camera_id}</h4>
+                      <h4 className="font-extrabold text-white text-xs font-mono">CAMARA: {selectedAlert.camera_display_name || selectedAlert.camera_id}</h4>
                       <p className="text-[9px] text-gray-400 mt-0.5 font-mono">Alert ID: #{selectedAlert.id}</p>
                     </div>
                     <div className="px-2 py-0.5 rounded text-[10px] font-black font-mono bg-red-950/60 border border-red-500/30 text-red-500">

@@ -35,16 +35,88 @@ class CameraSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class SecurityAlertSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.SerializerMethodField()
+    store_name = serializers.SerializerMethodField()
+    camera_display_name = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _get_camera(camera_id):
+        return Camera.objects.filter(camera_id=camera_id).select_related('store__tenant').first()
+
+    def get_tenant_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        if camera and camera.store and camera.store.tenant:
+            return camera.store.tenant.name
+        return ""
+
+    def get_store_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        if camera and camera.store:
+            return camera.store.name
+        return ""
+
+    def get_camera_display_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        return camera.display_name if camera else ""
+
     class Meta:
         model = SecurityAlert
         fields = '__all__'
 
 class TelemetriaAfluenciaSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.SerializerMethodField()
+    store_name = serializers.SerializerMethodField()
+    camera_display_name = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _get_camera(camera_id):
+        return Camera.objects.filter(camera_id=camera_id).select_related('store__tenant').first()
+
+    def get_tenant_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        if camera and camera.store and camera.store.tenant:
+            return camera.store.tenant.name
+        return ""
+
+    def get_store_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        if camera and camera.store:
+            return camera.store.name
+        return ""
+
+    def get_camera_display_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        return camera.display_name if camera else ""
+
     class Meta:
         model = Telemetria_Afluencia
         fields = '__all__'
 
 class HeatmapsSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.SerializerMethodField()
+    store_name = serializers.SerializerMethodField()
+    camera_display_name = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _get_camera(camera_id):
+        return Camera.objects.filter(camera_id=camera_id).select_related('store__tenant').first()
+
+    def get_tenant_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        if camera and camera.store and camera.store.tenant:
+            return camera.store.tenant.name
+        return ""
+
+    def get_store_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        if camera and camera.store:
+            return camera.store.name
+        return ""
+
+    def get_camera_display_name(self, obj):
+        camera = self._get_camera(obj.camera_id)
+        return camera.display_name if camera else ""
+
     class Meta:
         model = Heatmaps
         fields = '__all__'

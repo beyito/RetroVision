@@ -42,6 +42,53 @@ def scope_by_user(queryset, user, tenant_field: str, store_field: str):
     return queryset.none()
 
 
+def _optional_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _camera_ids_for_scope(user, tenant_id=None, store_id=None, camera_id=None):
+    queryset = Camera.objects.select_related("store", "store__tenant").all()
+
+    if not is_admin_software(user):
+        queryset = scope_by_user(queryset, user, "store__tenant_id", "store_id")
+
+    if tenant_id is not None:
+        queryset = queryset.filter(store__tenant_id=tenant_id)
+    if store_id is not None:
+        queryset = queryset.filter(store_id=store_id)
+    if camera_id:
+        queryset = queryset.filter(camera_id=camera_id)
+
+    return list(queryset.values_list("camera_id", flat=True))
+
+
+def _apply_context_filters(request, queryset, *, camera_field="camera_id"):
+    user = request.user
+    tenant_id = _optional_int(request.query_params.get("tenant"))
+    store_id = _optional_int(request.query_params.get("store"))
+    camera_id = request.query_params.get("camera_id") or None
+
+    if isinstance(user, EdgeNode):
+        if camera_id:
+            return queryset.filter(**{camera_field: camera_id})
+        return queryset
+
+    allowed_camera_ids = _camera_ids_for_scope(
+        user,
+        tenant_id=tenant_id,
+        store_id=store_id,
+        camera_id=camera_id,
+    )
+    if not allowed_camera_ids:
+        return queryset.none()
+    return queryset.filter(**{f"{camera_field}__in": allowed_camera_ids})
+
+
 class TenantViewSet(viewsets.ModelViewSet):
     """API endpoint that allows tenants to be viewed by dashboard users."""
     permission_classes = [IsAuthenticated]
@@ -66,7 +113,11 @@ class StoreViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Store.objects.select_related('tenant').all().order_by('tenant__name', 'name')
-        return scope_by_user(queryset, self.request.user, "tenant_id", "id")
+        queryset = scope_by_user(queryset, self.request.user, "tenant_id", "id")
+        tenant_id = _optional_int(self.request.query_params.get("tenant"))
+        if tenant_id is not None:
+            queryset = queryset.filter(tenant_id=tenant_id)
+        return queryset
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -133,10 +184,22 @@ class CameraViewSet(viewsets.ModelViewSet):
         queryset = Camera.objects.select_related('store', 'store__tenant', 'edge_node').all().order_by('camera_id')
         user = self.request.user
         if isinstance(user, EdgeNode):
-            return queryset.filter(
+            queryset = queryset.filter(
                 Q(store=user.store) & (Q(edge_node=user) | Q(edge_node__isnull=True))
             )
-        return scope_by_user(queryset, user, "store__tenant_id", "store_id")
+        else:
+            queryset = scope_by_user(queryset, user, "store__tenant_id", "store_id")
+
+        tenant_id = _optional_int(self.request.query_params.get("tenant"))
+        store_id = _optional_int(self.request.query_params.get("store"))
+        camera_id = self.request.query_params.get("camera_id")
+        if tenant_id is not None:
+            queryset = queryset.filter(store__tenant_id=tenant_id)
+        if store_id is not None:
+            queryset = queryset.filter(store_id=store_id)
+        if camera_id:
+            queryset = queryset.filter(camera_id=camera_id)
+        return queryset
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -179,17 +242,8 @@ class SecurityAlertViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = SecurityAlertSerializer
 
     def get_queryset(self):
-        user = self.request.user
         queryset = SecurityAlert.objects.all().order_by('-timestamp')
-        if is_admin_software(user):
-            return queryset
-        if getattr(user, "tenant_id", None):
-            allowed_cameras = Camera.objects.filter(store__tenant_id=user.tenant_id).values_list("camera_id", flat=True)
-            return queryset.filter(camera_id__in=allowed_cameras)
-        if getattr(user, "store_id", None):
-            allowed_cameras = Camera.objects.filter(store_id=user.store_id).values_list("camera_id", flat=True)
-            return queryset.filter(camera_id__in=allowed_cameras)
-        return queryset.none()
+        return _apply_context_filters(self.request, queryset)
 
 class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows commercial telemetry to be viewed."""
@@ -198,17 +252,8 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = TelemetriaAfluenciaSerializer
 
     def get_queryset(self):
-        user = self.request.user
         queryset = Telemetria_Afluencia.objects.all().order_by('-timestamp')
-        if is_admin_software(user):
-            return queryset
-        if getattr(user, "tenant_id", None):
-            allowed_cameras = Camera.objects.filter(store__tenant_id=user.tenant_id).values_list("camera_id", flat=True)
-            return queryset.filter(camera_id__in=allowed_cameras)
-        if getattr(user, "store_id", None):
-            allowed_cameras = Camera.objects.filter(store_id=user.store_id).values_list("camera_id", flat=True)
-            return queryset.filter(camera_id__in=allowed_cameras)
-        return queryset.none()
+        return _apply_context_filters(self.request, queryset)
 
 class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows visual heatmaps to be viewed."""
@@ -217,14 +262,5 @@ class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = HeatmapsSerializer
 
     def get_queryset(self):
-        user = self.request.user
         queryset = Heatmaps.objects.all().order_by('-timestamp')
-        if is_admin_software(user):
-            return queryset
-        if getattr(user, "tenant_id", None):
-            allowed_cameras = Camera.objects.filter(store__tenant_id=user.tenant_id).values_list("camera_id", flat=True)
-            return queryset.filter(camera_id__in=allowed_cameras)
-        if getattr(user, "store_id", None):
-            allowed_cameras = Camera.objects.filter(store_id=user.store_id).values_list("camera_id", flat=True)
-            return queryset.filter(camera_id__in=allowed_cameras)
-        return queryset.none()
+        return _apply_context_filters(self.request, queryset)

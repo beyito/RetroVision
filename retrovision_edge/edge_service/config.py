@@ -23,6 +23,7 @@ class VideoConfig:
     fps: int = 30
     fourcc_codec: str = 'MJPG'  # Motion JPEG para mejor compresión
     timeout_seconds: int = 10
+    model_name: str = "yolov8n.pt"
 
 
 @dataclass
@@ -120,6 +121,7 @@ class EdgeServiceConfig:
             frame_width=int(os.getenv('FRAME_WIDTH', 1280)),
             frame_height=int(os.getenv('FRAME_HEIGHT', 720)),
             fps=int(os.getenv('FPS', 30)),
+            model_name=os.getenv('MODEL_NAME', 'yolov8n.pt'),
         )
 
         self.ring_buffer = RingBufferConfig(

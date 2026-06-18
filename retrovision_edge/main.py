@@ -100,7 +100,7 @@ class EdgeServiceRunner:
                 frame_width=self.config.video.frame_width,
                 frame_height=self.config.video.frame_height,
                 target_fps=self.config.video.fps,
-                model_name="yolov8s.pt",
+                model_name=self.config.video.model_name,
                 confidence_threshold=0.5,
                 draw_detections=True,
                 mqtt_enabled=self.config.mqtt.enabled,

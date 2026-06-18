@@ -275,8 +275,8 @@ class DetectionPipeline:
                 # Luego, para cada detección, intentar estimar postura y dibujar
                 if self._posture_estimator is not None:
                     for det in detection_result.detections:
-                        # Si es un arma blanca (knife, scissors), no calculamos landmarks ni postura
-                        if det.class_name in ("knife", "scissors"):
+                        # Solo estimamos postura para personas
+                        if det.class_name.lower() not in ("person", "people"):
                             continue
                         try:
                             x1, y1, x2, y2 = det.x1, det.y1, det.x2, det.y2
@@ -338,8 +338,8 @@ class DetectionPipeline:
 
             # Process trajectories, ROI and heatmap coordinates
             for det in detection_result.detections:
-                # Omitir armas blancas de las métricas comerciales y flujo espacial
-                if det.class_name in ("knife", "scissors"):
+                # Solo procesamos métricas comerciales y flujo espacial para personas
+                if det.class_name.lower() not in ("person", "people"):
                     continue
                 cx, cy = det.center()
                 
@@ -495,13 +495,20 @@ class DetectionPipeline:
             if self._behavior_analyzer is not None and self._alert_writer is not None:
                 high_risk_detected = False
                 for det in detection_result.detections:
-                    if det.class_name in ("knife", "scissors"):
-                        # Forzar risk_score de arma blanca al 95% o la confianza (lo que sea mayor)
+                    is_weapon = det.class_name.lower() in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle") or any(w in det.class_name.lower() for w in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle"))
+                    is_mask = det.class_name.lower() == "mask"
+                    
+                    if is_weapon or is_mask:
+                        # Forzar risk_score al 95% o la confianza (lo que sea mayor)
                         det.risk_score = max(0.95, det.confidence)
                         high_risk_detected = True
                         self.logger.warning(
-                            f"ALERTA CRÍTICA: Arma blanca detectada ({det.class_name}) con probabilidad {det.confidence:.2f}"
+                            f"ALERTA CRÍTICA: Amenaza detectada ({det.class_name}) con probabilidad {det.confidence:.2f}"
                         )
+                        continue
+                        
+                    if det.class_name.lower() == "no-mask":
+                        # no-mask es normal, ignorar en análisis de riesgo
                         continue
                     try:
                         analysis = self._behavior_analyzer.analyze(det.landmarks)
@@ -525,7 +532,18 @@ class DetectionPipeline:
                             rules = []
                             for det in detection_result.detections:
                                 if det.risk_score > 0.7:
-                                    if det.class_name in ("knife", "scissors"):
+                                    is_firearm = any(w in det.class_name.lower() for w in ("pistol", "handgun", "firearm", "gun", "rifle"))
+                                    is_cold_weapon = any(w in det.class_name.lower() for w in ("knife", "scissors"))
+                                    is_generic_weapon = det.class_name.lower() in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle") or any(w in det.class_name.lower() for w in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle"))
+                                    is_mask = det.class_name.lower() == "mask"
+                                    
+                                    if is_firearm:
+                                        rules.append("Presencia de Arma de Fuego")
+                                    elif is_cold_weapon:
+                                        rules.append("Presencia de Arma Blanca")
+                                    elif is_mask:
+                                        rules.append("Persona Enmascarada")
+                                    elif is_generic_weapon:
                                         rules.append("Presencia de Arma Blanca")
                                     elif det.landmarks:
                                         rules.extend(self._behavior_analyzer.analyze(det.landmarks).rules_triggered)

@@ -114,12 +114,7 @@ class ObjectDetector:
         device: Dispositivo de ejecución ('cpu', 'gpu', 'mps')
     """
     
-    # Mapeo de clases COCO (solo nos interesa persona=0, cuchillo=43 y tijeras=76)
-    COCO_CLASSES = {
-        0: "person",
-        43: "knife",
-        76: "scissors",
-    }
+    WEAPON_CLASSES = {"knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle"}
     
     # Solo detectar personas
     TARGET_CLASS_ID = 0
@@ -218,8 +213,8 @@ class ObjectDetector:
             
             # Ejecutar track con un umbral bajo de confianza para capturar armas,
             # luego aplicaremos el umbral dinámico por clase en _process_results.
-            # conf_val = min(0.25, self.confidence_threshold)
-            conf_val = 0.10
+            conf_val = min(0.40, self.confidence_threshold)
+            # conf_val = 0.10
 
             results = self._model.track(
                 source=frame,
@@ -277,16 +272,29 @@ class ObjectDetector:
             confidence = float(box.conf[0].cpu().numpy())
             class_id = int(box.cls[0].cpu().numpy())
             
-            # FILTRO: Aceptamos personas (0), cuchillos (43) y tijeras (76)
-            if class_id not in self.COCO_CLASSES:
+            # Obtener nombre de clase dinámicamente desde el modelo
+            class_name = "unknown"
+            if hasattr(result, "names") and result.names and class_id in result.names:
+                class_name = result.names[class_id]
+            else:
+                class_name = {0: "person", 43: "knife", 76: "scissors"}.get(class_id, "unknown")
+            
+            # Normalizar nombre para comparación
+            class_name_lower = class_name.lower()
+            
+            is_person = class_name_lower in ("person", "people")
+            is_weapon = class_name_lower in self.WEAPON_CLASSES or any(w in class_name_lower for w in self.WEAPON_CLASSES)
+            is_mask = class_name_lower in ("mask", "no-mask")
+            
+            if not (is_person or is_weapon or is_mask):
                 continue
             
             # Aplicar umbral de confianza específico por clase
-            if class_id == 0:
+            if is_person:
                 if confidence < self.confidence_threshold:
                     continue
             else:
-                if confidence < 0.10:
+                if confidence < 0.50:
                     continue
             
             # Convertir coordenadas a enteros y validar límites
@@ -309,9 +317,7 @@ class ObjectDetector:
                 y2=int(y2),
                 confidence=confidence,
                 class_id=class_id,
-                class_name=self.COCO_CLASSES.get(
-                    class_id, "unknown"
-                ),
+                class_name=class_name,
                 track_id=track_id,
             )
             
@@ -369,8 +375,10 @@ class ObjectDetector:
         frame_copy = frame.copy()
         
         for detection in detections:
-            # Color dinámico: rojo para armas (knife, scissors), color estándar (verde) para personas
-            det_color = (0, 0, 255) if detection.class_name in ("knife", "scissors") else color
+            # Color dinámico: rojo para amenazas (armas, máscara), color estándar (verde) para personas y no-máscara
+            is_weapon_det = detection.class_name.lower() in self.WEAPON_CLASSES or any(w in detection.class_name.lower() for w in self.WEAPON_CLASSES)
+            is_mask_threat = detection.class_name.lower() == "mask"
+            det_color = (0, 0, 255) if (is_weapon_det or is_mask_threat) else color
 
             # Dibujar rectángulo
             cv2.rectangle(

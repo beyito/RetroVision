@@ -1,6 +1,105 @@
 """Database models for RetroVision security alerts."""
 
+import secrets
+
 from django.db import models
+
+
+class Tenant(models.Model):
+    """Customer company that owns one or more stores."""
+
+    name = models.CharField(max_length=128, unique=True)
+    slug = models.SlugField(max_length=128, unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Store(models.Model):
+    """Physical store or branch belonging to a tenant."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="stores")
+    name = models.CharField(max_length=128)
+    code = models.SlugField(max_length=128, unique=True)
+    address = models.CharField(max_length=255, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["tenant__name", "name"]
+        unique_together = [("tenant", "name")]
+
+    def __str__(self) -> str:
+        return f"{self.tenant.name} / {self.name}"
+
+
+class EdgeNode(models.Model):
+    """Trusted edge node installed in a store."""
+
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name="edge_nodes")
+    node_id = models.CharField(max_length=128, unique=True, db_index=True)
+    display_name = models.CharField(max_length=128, blank=True, default="")
+    api_key = models.CharField(max_length=128, unique=True, editable=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["node_id"]
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Compatibilidad con permisos DRF basados en usuario autenticado."""
+        return True
+
+    def save(self, *args, **kwargs):
+        if not self.api_key:
+            self.api_key = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return self.display_name or self.node_id
+
+
+class Camera(models.Model):
+    """Camera profile used by edge nodes and dashboards."""
+
+    store = models.ForeignKey(
+        Store,
+        on_delete=models.CASCADE,
+        related_name="cameras",
+        null=True,
+        blank=True,
+    )
+    edge_node = models.ForeignKey(
+        EdgeNode,
+        on_delete=models.SET_NULL,
+        related_name="cameras",
+        null=True,
+        blank=True,
+    )
+    camera_id = models.CharField(max_length=128, unique=True, db_index=True)
+    display_name = models.CharField(max_length=128, blank=True, default="")
+    video_source = models.CharField(max_length=512, blank=True, default="")
+    roi_polygon = models.JSONField(default=list, blank=True)
+    queue_wait_threshold = models.FloatField(default=5.0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["camera_id"]
+        indexes = [
+            models.Index(fields=["store", "camera_id"]),
+        ]
+
+    def __str__(self) -> str:
+        return self.display_name or self.camera_id
 
 
 class SecurityAlert(models.Model):

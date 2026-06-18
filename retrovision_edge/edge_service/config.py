@@ -8,13 +8,16 @@ Maneja variables de entorno y parámetros del sistema.
 import os
 import json
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
+
+from .camera_config_client import CameraConfigClient
 
 
 @dataclass
 class VideoConfig:
     """Configuración de captura de video."""
     camera_index: int = 0
+    video_source: Union[int, str] = 0
     frame_width: int = 1280
     frame_height: int = 720
     fps: int = 30
@@ -53,13 +56,52 @@ class LoggingConfig:
     backup_count: int = 5
 
 
+@dataclass
+class BackendApiConfig:
+    """Configuración para sincronizar perfiles de cámara con el backend."""
+    base_url: str = "http://localhost:8000"
+    edge_node_id: str = ""
+    edge_api_key: str = ""
+    username: str = ""
+    password: str = ""
+    token: str = ""
+    timeout_seconds: int = 10
+    sync_camera_config: bool = False
+
+
 class EdgeServiceConfig:
     """Clase principal de configuración. Gestiona todas las secciones."""
 
+    @staticmethod
+    def _parse_video_source(raw_value: Optional[str], fallback_camera_index: int) -> Union[int, str]:
+        """
+        Normaliza la fuente de video desde variables de entorno.
+
+        Reglas:
+        - Si no existe VIDEO_SOURCE, usa CAMERA_INDEX para mantener compatibilidad.
+        - Si VIDEO_SOURCE es un entero, se interpreta como índice de webcam.
+        - En otro caso se trata como URL RTSP o ruta de archivo.
+        """
+        if raw_value is None or raw_value.strip() == "":
+            return fallback_camera_index
+
+        normalized = raw_value.strip()
+        try:
+            return int(normalized)
+        except ValueError:
+            return normalized
+
     def __init__(self):
         """Inicializa la configuración desde variables de entorno."""
+        camera_index = int(os.getenv('CAMERA_INDEX', 0))
+        video_source = self._parse_video_source(
+            os.getenv('VIDEO_SOURCE'),
+            fallback_camera_index=camera_index,
+        )
+
         self.video = VideoConfig(
-            camera_index=int(os.getenv('CAMERA_INDEX', 0)),
+            camera_index=camera_index,
+            video_source=video_source,
             frame_width=int(os.getenv('FRAME_WIDTH', 1280)),
             frame_height=int(os.getenv('FRAME_HEIGHT', 720)),
             fps=int(os.getenv('FPS', 30)),
@@ -94,7 +136,52 @@ class EdgeServiceConfig:
             log_file=os.getenv('LOG_FILE', 'logs/edge_service.log'),
         )
 
+        self.backend_api = BackendApiConfig(
+            base_url=os.getenv('BACKEND_API_BASE_URL', 'http://localhost:8000'),
+            edge_node_id=os.getenv('EDGE_NODE_ID', ''),
+            edge_api_key=os.getenv('EDGE_API_KEY', ''),
+            username=os.getenv('BACKEND_API_USERNAME', ''),
+            password=os.getenv('BACKEND_API_PASSWORD', ''),
+            token=os.getenv('BACKEND_API_TOKEN', ''),
+            timeout_seconds=int(os.getenv('BACKEND_API_TIMEOUT', 10)),
+            sync_camera_config=os.getenv('SYNC_CAMERA_CONFIG', 'false').lower() == 'true',
+        )
+
         self.debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
+        self._apply_remote_camera_profile()
+
+    def _apply_remote_camera_profile(self) -> None:
+        """Sobrescribe la configuración local con el perfil de cámara remoto si está habilitado."""
+        if not self.backend_api.sync_camera_config:
+            return
+
+        if not self.mqtt.camera_id:
+            return
+
+        try:
+            client = CameraConfigClient(
+                base_url=self.backend_api.base_url,
+                edge_node_id=self.backend_api.edge_node_id,
+                edge_api_key=self.backend_api.edge_api_key,
+                token=self.backend_api.token,
+                username=self.backend_api.username,
+                password=self.backend_api.password,
+                timeout_seconds=self.backend_api.timeout_seconds,
+            )
+            remote_profile = client.get_camera_profile(self.mqtt.camera_id)
+            if not remote_profile:
+                return
+
+            remote_roi = remote_profile.get("roi_polygon")
+            if isinstance(remote_roi, list) and remote_roi:
+                self.mqtt.roi_polygon = remote_roi
+
+            remote_wait = remote_profile.get("queue_wait_threshold")
+            if remote_wait is not None:
+                self.mqtt.queue_wait_threshold = float(remote_wait)
+        except Exception:
+            # El edge debe seguir funcionando aunque el backend no responda.
+            return
 
     def validate(self) -> None:
         """
@@ -105,6 +192,9 @@ class EdgeServiceConfig:
         """
         if self.video.camera_index < 0:
             raise ValueError("camera_index debe ser >= 0")
+
+        if isinstance(self.video.video_source, int) and self.video.video_source < 0:
+            raise ValueError("video_source no puede ser un índice negativo")
         
         if self.video.frame_width <= 0 or self.video.frame_height <= 0:
             raise ValueError("Dimensiones de frame deben ser positivas")

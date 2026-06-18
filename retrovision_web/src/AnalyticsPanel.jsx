@@ -8,8 +8,9 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, 
   CartesianGrid, Legend, ScatterChart, Scatter, ZAxis
 } from 'recharts';
+import { API_BASE_URL } from './config';
 
-export default function AnalyticsPanel({ token }) {
+export default function AnalyticsPanel({ token, selectedTenantId, selectedStoreId, selectedCameraId }) {
   const [telemetry, setTelemetry] = useState([]);
   const [heatmaps, setHeatmaps] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,12 +20,24 @@ export default function AnalyticsPanel({ token }) {
   const fetchData = async () => {
     if (!token) return;
     try {
+      const params = new URLSearchParams();
+      if (selectedTenantId && selectedTenantId !== 'ALL') {
+        params.set('tenant', selectedTenantId);
+      }
+      if (selectedStoreId && selectedStoreId !== 'ALL') {
+        params.set('store', selectedStoreId);
+      }
+      if (selectedCameraId && selectedCameraId !== 'ALL') {
+        params.set('camera_id', selectedCameraId);
+      }
+      const query = params.toString() ? `?${params.toString()}` : '';
+
       // Fetch both telemetry and heatmap data
       const [telemetryRes, heatmapsRes] = await Promise.all([
-        axios.get('http://localhost:8000/api/telemetry/', {
+        axios.get(`${API_BASE_URL}/api/telemetry/${query}`, {
           headers: { Authorization: `Bearer ${token}` }
         }),
-        axios.get('http://localhost:8000/api/heatmaps/', {
+        axios.get(`${API_BASE_URL}/api/heatmaps/${query}`, {
           headers: { Authorization: `Bearer ${token}` }
         })
       ]);
@@ -46,7 +59,7 @@ export default function AnalyticsPanel({ token }) {
     // Poll telemetry data every 3 seconds to match the edge publisher frequency
     const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
-  }, [token]);
+  }, [token, selectedTenantId, selectedStoreId, selectedCameraId]);
 
   // Derived metrics
   const latest = telemetry.length > 0 ? telemetry[0] : null;

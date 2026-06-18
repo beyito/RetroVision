@@ -34,3 +34,6 @@ alerts/*.mp4
 
 # 7. Bases de datos locales
 *.sqlite3
+retrovision_edge/.env.rtsp
+retrovision_edge/.env.video
+retrovision_edge/.env.webcam

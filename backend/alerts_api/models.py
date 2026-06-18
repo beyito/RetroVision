@@ -5,6 +5,11 @@ import secrets
 from django.db import models
 
 
+def generate_api_key() -> str:
+    """Genera API keys estables para edge nodes."""
+    return secrets.token_urlsafe(32)
+
+
 class Tenant(models.Model):
     """Customer company that owns one or more stores."""
 
@@ -44,7 +49,8 @@ class EdgeNode(models.Model):
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name="edge_nodes")
     node_id = models.CharField(max_length=128, unique=True, db_index=True)
     display_name = models.CharField(max_length=128, blank=True, default="")
-    api_key = models.CharField(max_length=128, unique=True, editable=False)
+    control_api_base_url = models.CharField(max_length=255, blank=True, default="")
+    api_key = models.CharField(max_length=128, unique=True, editable=False, default=generate_api_key)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -88,6 +94,13 @@ class Camera(models.Model):
     video_source = models.CharField(max_length=512, blank=True, default="")
     roi_polygon = models.JSONField(default=list, blank=True)
     queue_wait_threshold = models.FloatField(default=5.0)
+    queue_roi_polygon = models.JSONField(default=list, blank=True)
+    queue_dwell_seconds = models.FloatField(default=2.0)
+    queue_alert_people_threshold = models.PositiveIntegerField(default=3)
+    queue_alert_duration_seconds = models.FloatField(default=5.0)
+    max_allowed_wait_seconds = models.FloatField(default=120.0)
+    cashier_count = models.PositiveIntegerField(default=1)
+    service_rate_per_cashier_per_minute = models.FloatField(default=12.0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -95,7 +108,7 @@ class Camera(models.Model):
     class Meta:
         ordering = ["camera_id"]
         indexes = [
-            models.Index(fields=["store", "camera_id"]),
+            models.Index(fields=["store", "camera_id"], name="alerts_api__store_i_9f5ee7_idx"),
         ]
 
     def __str__(self) -> str:
@@ -142,6 +155,10 @@ class Telemetria_Afluencia(models.Model):
     personas_salientes = models.IntegerField(default=0)
     personas_en_cola = models.IntegerField(default=0)
     tiempo_espera_promedio = models.FloatField(default=0.0)
+    tiempo_espera_estimado = models.FloatField(default=0.0)
+    presion_cola_ratio = models.FloatField(default=0.0)
+    alerta_cola_activa = models.BooleanField(default=False)
+    motivo_alerta_cola = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

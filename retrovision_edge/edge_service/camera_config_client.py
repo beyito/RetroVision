@@ -45,6 +45,12 @@ class CameraConfigClient:
         camera_id: str,
         roi_polygon: list[list[int]],
         queue_wait_threshold: float,
+        queue_dwell_seconds: float = 2.0,
+        queue_alert_people_threshold: int = 3,
+        queue_alert_duration_seconds: float = 5.0,
+        max_allowed_wait_seconds: float = 120.0,
+        cashier_count: int = 1,
+        service_rate_per_cashier_per_minute: float = 12.0,
         video_source: Optional[str] = None,
     ) -> dict[str, Any]:
         """Crea o actualiza el perfil de cámara asociado al ROI dibujado."""
@@ -52,7 +58,14 @@ class CameraConfigClient:
         payload = {
             "camera_id": camera_id,
             "roi_polygon": roi_polygon,
+            "queue_roi_polygon": roi_polygon,
             "queue_wait_threshold": queue_wait_threshold,
+            "queue_dwell_seconds": queue_dwell_seconds,
+            "queue_alert_people_threshold": queue_alert_people_threshold,
+            "queue_alert_duration_seconds": queue_alert_duration_seconds,
+            "max_allowed_wait_seconds": max_allowed_wait_seconds,
+            "cashier_count": cashier_count,
+            "service_rate_per_cashier_per_minute": service_rate_per_cashier_per_minute,
         }
         if video_source:
             payload["video_source"] = video_source

@@ -22,6 +22,7 @@ from .risk_analyzer import BehaviorAnalyzer, RiskAnalysis
 from .video_buffer import RingBuffer, BufferStats
 from .alert_writer import AlertWriter
 from .mqtt_publisher import AlertPublisher
+from .control_api import EdgeControlApiServer
 
 __all__ = [
     # Phase 1: Core
@@ -45,4 +46,5 @@ __all__ = [
     'BufferStats',
     'AlertWriter',
     'AlertPublisher',
+    'EdgeControlApiServer',
 ]

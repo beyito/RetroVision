@@ -104,7 +104,7 @@ def mouse_callback(event: int, x: int, y: int, flags: int, state: RoiSelectionSt
         state.remove_last_point()
 
 
-def render_overlay(frame, state: RoiSelectionState, camera_id: str, queue_wait_threshold: float):
+def render_overlay(frame, state: RoiSelectionState, camera_id: str, queue_dwell_seconds: float, max_allowed_wait_seconds: float):
     """Dibuja puntos, líneas y ayuda de uso."""
     canvas = frame.copy()
     points = state.points
@@ -134,7 +134,8 @@ def render_overlay(frame, state: RoiSelectionState, camera_id: str, queue_wait_t
 
     overlay_lines = [
         f"Camera: {camera_id}",
-        f"Threshold cola: {queue_wait_threshold:.1f}s",
+        f"Permanencia minima cola: {queue_dwell_seconds:.1f}s",
+        f"Espera maxima permitida: {max_allowed_wait_seconds:.1f}s",
         "Click izq: agregar punto | Click der: deshacer",
         "Teclas: c limpiar | s guardar | q salir",
     ]
@@ -155,6 +156,7 @@ def render_overlay(frame, state: RoiSelectionState, camera_id: str, queue_wait_t
 def save_roi_to_env(env_file_path: Path, roi_polygon: list[list[int]], queue_wait_threshold: float) -> None:
     """Persiste el ROI y threshold en el archivo .env de la instancia."""
     set_key(str(env_file_path), "ROI_POLYGON", json.dumps(roi_polygon))
+    set_key(str(env_file_path), "QUEUE_ROI_POLYGON", json.dumps(roi_polygon))
     set_key(str(env_file_path), "QUEUE_WAIT_THRESHOLD", str(queue_wait_threshold))
 
 
@@ -173,6 +175,12 @@ def save_roi_to_backend(config: EdgeServiceConfig, roi_polygon: list[list[int]])
         camera_id=config.mqtt.camera_id,
         roi_polygon=roi_polygon,
         queue_wait_threshold=config.mqtt.queue_wait_threshold,
+        queue_dwell_seconds=config.mqtt.queue_dwell_seconds,
+        queue_alert_people_threshold=config.mqtt.queue_alert_people_threshold,
+        queue_alert_duration_seconds=config.mqtt.queue_alert_duration_seconds,
+        max_allowed_wait_seconds=config.mqtt.max_allowed_wait_seconds,
+        cashier_count=config.mqtt.cashier_count,
+        service_rate_per_cashier_per_minute=config.mqtt.service_rate_per_cashier_per_minute,
         video_source=str(config.video.video_source),
     )
 
@@ -188,7 +196,7 @@ def main() -> None:
     config.validate()
 
     frame, source_label = capture_reference_frame(config, frame_skip=args.frame_skip)
-    state = RoiSelectionState(initial_points=config.mqtt.roi_polygon)
+    state = RoiSelectionState(initial_points=config.mqtt.queue_roi_polygon or config.mqtt.roi_polygon)
     window_name = f"RetroVision ROI Selector - {config.mqtt.camera_id}"
 
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -205,7 +213,8 @@ def main() -> None:
                 frame=frame,
                 state=state,
                 camera_id=config.mqtt.camera_id,
-                queue_wait_threshold=config.mqtt.queue_wait_threshold,
+                queue_dwell_seconds=config.mqtt.queue_dwell_seconds,
+                max_allowed_wait_seconds=config.mqtt.max_allowed_wait_seconds,
             )
             cv2.imshow(window_name, canvas)
             key = cv2.waitKey(30) & 0xFF

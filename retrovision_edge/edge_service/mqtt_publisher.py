@@ -149,6 +149,10 @@ class AlertPublisher:
         personas_salientes: int,
         personas_en_cola: int,
         tiempo_espera_promedio: float,
+        tiempo_espera_estimado: float,
+        presion_cola_ratio: float,
+        alerta_cola_activa: bool,
+        motivo_alerta_cola: str,
         heatmap_points: list[list[int]],
         timestamp: Optional[datetime] = None,
     ) -> bool:
@@ -168,6 +172,10 @@ class AlertPublisher:
             "personas_salientes": int(personas_salientes),
             "personas_en_cola": int(personas_en_cola),
             "tiempo_espera_promedio": round(float(tiempo_espera_promedio), 2),
+            "tiempo_espera_estimado": round(float(tiempo_espera_estimado), 2),
+            "presion_cola_ratio": round(float(presion_cola_ratio), 4),
+            "alerta_cola_activa": bool(alerta_cola_activa),
+            "motivo_alerta_cola": str(motivo_alerta_cola or ""),
             "heatmap_points": list(heatmap_points),
         }
 

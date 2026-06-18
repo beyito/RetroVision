@@ -1,7 +1,11 @@
 from django.db.models import Q
+from urllib import request as urlrequest, error as urlerror
 from rest_framework import viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import SessionAuthentication
+from rest_framework.response import Response
+from django.http import HttpResponse, JsonResponse
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Camera, SecurityAlert, Telemetria_Afluencia, Heatmaps
 from .serializers import (
@@ -234,6 +238,36 @@ class CameraViewSet(viewsets.ModelViewSet):
             )
             return
         serializer.save()
+
+    @action(detail=True, methods=["get"], url_path="snapshot")
+    def snapshot(self, request, camera_id=None):
+        camera = self.get_object()
+        edge_node = camera.edge_node
+        if edge_node is None or not edge_node.control_api_base_url:
+            return JsonResponse(
+                {"detail": "La camara no tiene un edge node con control_api_base_url configurado."},
+                status=400,
+            )
+
+        snapshot_url = f"{edge_node.control_api_base_url.rstrip('/')}/snapshot?camera_id={camera.camera_id}"
+        upstream_request = urlrequest.Request(
+            snapshot_url,
+            headers={
+                "X-Edge-Node-Id": edge_node.node_id,
+                "X-Edge-Api-Key": edge_node.api_key,
+            },
+            method="GET",
+        )
+        try:
+            with urlrequest.urlopen(upstream_request, timeout=10) as upstream_response:
+                payload = upstream_response.read()
+                content_type = upstream_response.headers.get("Content-Type", "image/jpeg")
+                return HttpResponse(payload, content_type=content_type)
+        except urlerror.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore") or "Error del edge al generar snapshot."
+            return JsonResponse({"detail": detail}, status=exc.code)
+        except Exception as exc:
+            return JsonResponse({"detail": f"No se pudo obtener snapshot del edge: {exc}"}, status=502)
 
 class SecurityAlertViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows security alerts to be viewed."""

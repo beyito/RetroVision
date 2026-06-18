@@ -11,6 +11,7 @@ import {
   Users,
 } from 'lucide-react';
 
+import CameraConfigurationPanel from './components/CameraConfigurationPanel';
 import Dashboard from './Dashboard';
 import { API_BASE_URL } from './config';
 
@@ -171,6 +172,7 @@ function ManagementSection({
   onReset,
   onDelete,
   isEditing,
+  snapshotUrl,
 }) {
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
@@ -254,7 +256,7 @@ function ManagementSection({
               ) : (
                 <input
                   type={field.type || 'text'}
-                  value={formState[field.name] ?? ''}
+                  value={Array.isArray(formState[field.name]) ? JSON.stringify(formState[field.name]) : (formState[field.name] ?? '')}
                   onChange={(event) => onChange(field.name, event.target.value)}
                   placeholder={field.placeholder}
                   className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0a1220] px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
@@ -296,8 +298,22 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
   const [forms, setForms] = useState({
     tenants: { name: '', slug: '' },
     stores: { tenant: '', name: '', code: '', address: '' },
-    edgeNodes: { store: '', node_id: '', display_name: '' },
-    cameras: { store: '', edge_node: '', camera_id: '', display_name: '', queue_wait_threshold: '5', video_source: '' },
+    edgeNodes: { store: '', node_id: '', display_name: '', control_api_base_url: '' },
+    cameras: {
+      store: '',
+      edge_node: '',
+      camera_id: '',
+      display_name: '',
+      queue_wait_threshold: '5',
+      video_source: '',
+      queue_roi_polygon: [],
+      queue_dwell_seconds: '2',
+      queue_alert_people_threshold: '3',
+      queue_alert_duration_seconds: '5',
+      max_allowed_wait_seconds: '120',
+      cashier_count: '1',
+      service_rate_per_cashier_per_minute: '12',
+    },
   });
   const [selectedRecords, setSelectedRecords] = useState({
     tenants: null,
@@ -307,6 +323,30 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
   });
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [cameraSnapshotUrl, setCameraSnapshotUrl] = useState('');
+
+  const loadCameraSnapshot = async (cameraId) => {
+    if (!cameraId || !token) {
+      setCameraSnapshotUrl('');
+      return;
+    }
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/cameras/${cameraId}/snapshot/`, {
+        headers: apiHeaders(token),
+        responseType: 'blob',
+      });
+      const objectUrl = window.URL.createObjectURL(response.data);
+      setCameraSnapshotUrl((previous) => {
+        if (previous && previous.startsWith('blob:')) {
+          window.URL.revokeObjectURL(previous);
+        }
+        return objectUrl;
+      });
+    } catch (snapshotError) {
+      console.error(snapshotError);
+      setCameraSnapshotUrl('');
+    }
+  };
 
   const canManageTenants = profile?.role === 'ADMIN_SOFTWARE';
   const canManageStructure = profile?.role === 'ADMIN_SOFTWARE' || profile?.role === 'ADMIN_EMPRESA';
@@ -358,11 +398,31 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
     const defaults = {
       tenants: { name: '', slug: '' },
       stores: { tenant: '', name: '', code: '', address: '' },
-      edgeNodes: { store: '', node_id: '', display_name: '' },
-      cameras: { store: '', edge_node: '', camera_id: '', display_name: '', queue_wait_threshold: '5', video_source: '' },
+      edgeNodes: { store: '', node_id: '', display_name: '', control_api_base_url: '' },
+      cameras: {
+        store: '',
+        edge_node: '',
+        camera_id: '',
+        display_name: '',
+        queue_wait_threshold: '5',
+        video_source: '',
+        queue_roi_polygon: [],
+        queue_dwell_seconds: '2',
+        queue_alert_people_threshold: '3',
+        queue_alert_duration_seconds: '5',
+        max_allowed_wait_seconds: '120',
+        cashier_count: '1',
+        service_rate_per_cashier_per_minute: '12',
+      },
     };
     setForms((previous) => ({ ...previous, [section]: defaults[section] }));
     setSelectedRecords((previous) => ({ ...previous, [section]: null }));
+    if (section === 'cameras') {
+      if (cameraSnapshotUrl && cameraSnapshotUrl.startsWith('blob:')) {
+        window.URL.revokeObjectURL(cameraSnapshotUrl);
+      }
+      setCameraSnapshotUrl('');
+    }
   };
 
   const selectRecord = (section, item) => {
@@ -388,10 +448,15 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           store: item.store ? String(item.store) : '',
           node_id: item.node_id || '',
           display_name: item.display_name || '',
+          control_api_base_url: item.control_api_base_url || '',
         },
       }));
     }
     if (section === 'cameras') {
+      loadCameraSnapshot(item.camera_id);
+      const queuePolygon = Array.isArray(item.queue_roi_polygon) && item.queue_roi_polygon.length > 0
+        ? item.queue_roi_polygon
+        : (Array.isArray(item.roi_polygon) ? item.roi_polygon : []);
       setForms((previous) => ({
         ...previous,
         cameras: {
@@ -401,6 +466,13 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           display_name: item.display_name || '',
           queue_wait_threshold: String(item.queue_wait_threshold ?? '5'),
           video_source: item.video_source || '',
+          queue_roi_polygon: queuePolygon,
+          queue_dwell_seconds: String(item.queue_dwell_seconds ?? '2'),
+          queue_alert_people_threshold: String(item.queue_alert_people_threshold ?? '3'),
+          queue_alert_duration_seconds: String(item.queue_alert_duration_seconds ?? '5'),
+          max_allowed_wait_seconds: String(item.max_allowed_wait_seconds ?? '120'),
+          cashier_count: String(item.cashier_count ?? '1'),
+          service_rate_per_cashier_per_minute: String(item.service_rate_per_cashier_per_minute ?? '12'),
         },
       }));
     }
@@ -520,12 +592,14 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
         { key: 'tenant_name', label: 'Tenant' },
         { key: 'store_name', label: 'Tienda' },
         { key: 'node_id', label: 'Node ID' },
+        { key: 'control_api_base_url', label: 'Control API URL' },
         { key: 'api_key', label: 'API Key' },
       ],
       fields: [
         { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
         { name: 'node_id', label: 'Node ID' },
         { name: 'display_name', label: 'Nombre visible' },
+        { name: 'control_api_base_url', label: 'Control API URL' },
       ],
       submit: (event) => {
         event.preventDefault();
@@ -533,7 +607,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           updateRecord(`/api/edge-nodes/${selectedRecords.edgeNodes.id}/`, forms.edgeNodes, 'edgeNodes');
           return;
         }
-        createRecord('/api/edge-nodes/', forms.edgeNodes, 'edgeNodes', { store: '', node_id: '', display_name: '' });
+        createRecord('/api/edge-nodes/', forms.edgeNodes, 'edgeNodes', { store: '', node_id: '', display_name: '', control_api_base_url: '' });
       },
       deleteAction: () => deleteRecord(`/api/edge-nodes/${selectedRecords.edgeNodes.id}/`, 'edgeNodes'),
     },
@@ -546,6 +620,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
         { key: 'store_name', label: 'Tienda' },
         { key: 'camera_id', label: 'Camera ID' },
         { key: 'edge_node_name', label: 'Edge Node' },
+        { key: 'queue_alert_people_threshold', label: 'Umbral cola' },
       ],
       fields: [
         { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
@@ -553,22 +628,70 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
         { name: 'camera_id', label: 'Camera ID' },
         { name: 'display_name', label: 'Nombre visible' },
         { name: 'video_source', label: 'Video source' },
+        { name: 'queue_roi_polygon', label: 'ROI de cola', type: 'polygon' },
+        { name: 'queue_dwell_seconds', label: 'Permanencia minima (s)', type: 'number' },
+        { name: 'queue_alert_people_threshold', label: 'Personas para alerta', type: 'number' },
+        { name: 'queue_alert_duration_seconds', label: 'Duracion alerta (s)', type: 'number' },
+        { name: 'max_allowed_wait_seconds', label: 'Espera maxima permitida (s)', type: 'number' },
+        { name: 'cashier_count', label: 'Cantidad de cajeros', type: 'number' },
+        { name: 'service_rate_per_cashier_per_minute', label: 'Atencion por cajero/min', type: 'number' },
         { name: 'queue_wait_threshold', label: 'Threshold cola (s)', type: 'number' },
       ],
       submit: (event) => {
         event.preventDefault();
-        const payload = { ...forms.cameras, queue_wait_threshold: Number(forms.cameras.queue_wait_threshold || 5) };
+        const payload = {
+          ...forms.cameras,
+          queue_wait_threshold: Number(forms.cameras.queue_wait_threshold || 5),
+          queue_dwell_seconds: Number(forms.cameras.queue_dwell_seconds || 2),
+          queue_alert_people_threshold: Number(forms.cameras.queue_alert_people_threshold || 3),
+          queue_alert_duration_seconds: Number(forms.cameras.queue_alert_duration_seconds || 5),
+          max_allowed_wait_seconds: Number(forms.cameras.max_allowed_wait_seconds || 120),
+          cashier_count: Number(forms.cameras.cashier_count || 1),
+          service_rate_per_cashier_per_minute: Number(forms.cameras.service_rate_per_cashier_per_minute || 12),
+          queue_roi_polygon: forms.cameras.queue_roi_polygon,
+          roi_polygon: forms.cameras.queue_roi_polygon,
+        };
         if (selectedRecords.cameras) {
           updateRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, payload, 'cameras');
           return;
         }
-        createRecord('/api/cameras/', payload, 'cameras', { store: '', edge_node: '', camera_id: '', display_name: '', queue_wait_threshold: '5', video_source: '' });
+        createRecord('/api/cameras/', payload, 'cameras', {
+          store: '',
+          edge_node: '',
+          camera_id: '',
+          display_name: '',
+          queue_wait_threshold: '5',
+          video_source: '',
+          queue_roi_polygon: [],
+          queue_dwell_seconds: '2',
+          queue_alert_people_threshold: '3',
+          queue_alert_duration_seconds: '5',
+          max_allowed_wait_seconds: '120',
+          cashier_count: '1',
+          service_rate_per_cashier_per_minute: '12',
+        });
       },
       deleteAction: () => deleteRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, 'cameras'),
     },
   };
 
   const activeSection = sectionConfig[activeModule];
+  const cameraGeneralFields = [
+    { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
+    { name: 'edge_node', label: 'Nodo Edge', type: 'select', options: edgeNodeOptions },
+    { name: 'camera_id', label: 'Camera ID' },
+    { name: 'display_name', label: 'Nombre visible' },
+    { name: 'video_source', label: 'Video source' },
+  ];
+  const cameraRoiFields = [
+    { name: 'queue_dwell_seconds', label: 'Permanencia minima (s)', type: 'number' },
+    { name: 'queue_alert_people_threshold', label: 'Personas para alerta', type: 'number' },
+    { name: 'queue_alert_duration_seconds', label: 'Duracion alerta (s)', type: 'number' },
+    { name: 'max_allowed_wait_seconds', label: 'Espera maxima permitida (s)', type: 'number' },
+    { name: 'cashier_count', label: 'Cantidad de cajeros', type: 'number' },
+    { name: 'service_rate_per_cashier_per_minute', label: 'Atencion por cajero/min', type: 'number' },
+    { name: 'queue_wait_threshold', label: 'Threshold cola (s)', type: 'number' },
+  ];
 
   return (
     <div className="space-y-6">
@@ -618,7 +741,29 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
       {message && <div className="rounded-2xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-sm text-green-200">{message}</div>}
       {error && <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
 
-      {activeSection && (
+      {activeSection && activeModule === 'cameras' ? (
+        <CameraConfigurationPanel
+          title={activeSection.title}
+          subtitle={activeSection.subtitle}
+          items={activeSection.items}
+          columns={activeSection.columns}
+          formState={forms.cameras}
+          onChange={(field, value) => handleFormChange('cameras', field, value)}
+          onSubmit={activeSection.submit}
+          onSelectItem={(item) => selectRecord('cameras', item)}
+          selectedItemKey={selectedRecords.cameras?.camera_id}
+          onReset={() => resetSectionForm('cameras')}
+          onDelete={() => {
+            if (selectedRecords.cameras && window.confirm('Esta accion eliminara el registro seleccionado. Deseas continuar?')) {
+              activeSection.deleteAction();
+            }
+          }}
+          isEditing={Boolean(selectedRecords.cameras)}
+          snapshotUrl={cameraSnapshotUrl}
+          generalFields={cameraGeneralFields}
+          roiFields={cameraRoiFields}
+        />
+      ) : activeSection ? (
         <ManagementSection
           title={activeSection.title}
           subtitle={activeSection.subtitle}
@@ -637,8 +782,9 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
             }
           }}
           isEditing={Boolean(selectedRecords[activeModule])}
+          snapshotUrl={activeModule === 'cameras' ? cameraSnapshotUrl : ''}
         />
-      )}
+      ) : null}
     </div>
   );
 }

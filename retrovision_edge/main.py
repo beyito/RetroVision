@@ -7,10 +7,14 @@ Punto de entrada para el microservicio Edge.
 import argparse
 import signal
 import sys
+import time
+import threading
 from pathlib import Path
 
 import cv2
 from dotenv import load_dotenv
+
+from edge_service.camera_config_client import CameraConfigClient
 
 EDGE_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(EDGE_ROOT.parent))
@@ -74,6 +78,7 @@ class EdgeServiceRunner:
         )
 
         self.pipeline: DetectionPipeline | None = None
+        self.active_pipelines = {}
         self.control_api_server: EdgeControlApiServer | None = None
         self._setup_signal_handlers()
 
@@ -94,73 +99,186 @@ class EdgeServiceRunner:
             self.logger.info("Configuracion cargada desde: %s", self.env_file_path)
             self.logger.info("=" * 70)
 
-            self.pipeline = DetectionPipeline(
-                camera_index=self.config.video.camera_index,
-                video_source=self.config.video.video_source,
-                frame_width=self.config.video.frame_width,
-                frame_height=self.config.video.frame_height,
-                target_fps=self.config.video.fps,
-                model_name=self.config.video.model_name,
-                confidence_threshold=0.5,
-                draw_detections=True,
-                mqtt_enabled=self.config.mqtt.enabled,
-                mqtt_broker_host=self.config.mqtt.broker_host,
-                mqtt_broker_port=self.config.mqtt.broker_port,
-                mqtt_client_id=self.config.mqtt.client_id,
-                mqtt_topic=self.config.mqtt.topic,
-                mqtt_telemetry_topic=self.config.mqtt.telemetry_topic,
-                roi_polygon=self.config.mqtt.roi_polygon,
-                queue_wait_threshold=self.config.mqtt.queue_wait_threshold,
-                queue_roi_polygon=self.config.mqtt.queue_roi_polygon,
-                queue_dwell_seconds=self.config.mqtt.queue_dwell_seconds,
-                queue_alert_people_threshold=self.config.mqtt.queue_alert_people_threshold,
-                queue_alert_duration_seconds=self.config.mqtt.queue_alert_duration_seconds,
-                max_allowed_wait_seconds=self.config.mqtt.max_allowed_wait_seconds,
-                cashier_count=self.config.mqtt.cashier_count,
-                service_rate_per_cashier_per_minute=self.config.mqtt.service_rate_per_cashier_per_minute,
-                mqtt_keep_alive=self.config.mqtt.keep_alive,
-                camera_id=self.config.mqtt.camera_id,
-            )
-
-            self.pipeline.start()
-
-            if self.config.control_api.enabled:
-                self.control_api_server = EdgeControlApiServer(
-                    pipeline=self.pipeline,
-                    host=self.config.control_api.host,
-                    port=self.config.control_api.port,
-                    edge_node_id=self.config.backend_api.edge_node_id,
-                    edge_api_key=self.config.backend_api.edge_api_key,
-                )
-                self.control_api_server.start()
-
-            self.logger.info("Iniciando deteccion y telemetria (presiona 'q' para salir)...")
-
-            frame_count = 0
-            while self.pipeline.is_running():
-                success, frame, metadata, detection_result = self.pipeline.process_frame()
-
-                if not success or frame is None:
-                    self.logger.warning("Fallo la lectura de frame, reintentando...")
-                    continue
-
-                self.pipeline.display_frame_with_info(frame, metadata, detection_result)
-
-                frame_count += 1
-                if frame_count % 30 == 0 and detection_result:
-                    self.logger.info(
-                        "Frame %s: %s personas detectadas | Inferencia: %.2fms",
-                        metadata.frame_number,
-                        detection_result.count(),
-                        detection_result.inference_time_ms,
+            # Si sync_camera_config está habilitado, intentamos conectarnos al backend
+            sync_enabled = self.config.backend_api.sync_camera_config
+            edge_node_id = self.config.backend_api.edge_node_id
+            edge_api_key = self.config.backend_api.edge_api_key
+            
+            remote_cameras = []
+            if sync_enabled and edge_node_id and edge_api_key:
+                self.logger.info("Conectando con backend para obtener configuración multicámara...")
+                try:
+                    client = CameraConfigClient(
+                        base_url=self.config.backend_api.base_url,
+                        edge_node_id=edge_node_id,
+                        edge_api_key=edge_api_key,
+                        timeout_seconds=self.config.backend_api.timeout_seconds,
                     )
+                    remote_cameras = client.list_cameras()
+                    self.logger.info("Encontradas %s cámaras activas vinculadas a este nodo.", len(remote_cameras))
+                except Exception as exc:
+                    self.logger.warning("Fallo al obtener configuración remota: %s. Se usará modo local.", exc)
 
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    self.logger.info("Usuario presiono 'q'. Saliendo...")
-                    break
+            if sync_enabled and remote_cameras:
+                self.logger.info("Iniciando en MODO MULTI-CÁMARA ONLINE...")
+                
+                # Función que procesa los frames de una cámara en su propio hilo
+                def camera_thread_loop(pipeline, camera_id):
+                    self.logger.info("Hilo iniciado para cámara: %s", camera_id)
+                    pipeline.start()
+                    frame_count = 0
+                    try:
+                        while pipeline.is_running():
+                            success, frame, metadata, detection_result = pipeline.process_frame()
+                            if not success or frame is None:
+                                time.sleep(0.03)  # Evitar saturación en caso de desconexión temporal
+                                continue
+                            
+                            frame_count += 1
+                            if frame_count % 300 == 0:
+                                self.logger.info("[%s] Frame %s procesado correctamente.", camera_id, metadata.frame_number)
+                    except Exception as e:
+                        self.logger.error("Error en hilo de cámara %s: %s", camera_id, e, exc_info=True)
+                    finally:
+                        pipeline.release()
+                        self.logger.info("Hilo de cámara %s detenido.", camera_id)
 
-            self.pipeline.print_stats()
+                # Iniciar hilos para cada cámara
+                for cam in remote_cameras:
+                    cam_id = cam.get("camera_id")
+                    video_src = cam.get("video_source")
+                    
+                    # Intentar parsear a entero si es número (para webcams locales)
+                    try:
+                        video_src = int(video_src)
+                    except (ValueError, TypeError):
+                        pass
+                    
+                    roi_polygon = cam.get("roi_polygon") or self.config.mqtt.roi_polygon
+                    queue_roi_polygon = cam.get("queue_roi_polygon") or roi_polygon
+                    
+                    self.logger.info("Inicializando pipeline para %s (source: %s)...", cam_id, video_src)
+                    pipeline = DetectionPipeline(
+                        camera_index=0,
+                        video_source=video_src,
+                        frame_width=self.config.video.frame_width,
+                        frame_height=self.config.video.frame_height,
+                        target_fps=self.config.video.fps,
+                        model_name=self.config.video.model_name,
+                        confidence_threshold=0.5,
+                        draw_detections=True,
+                        mqtt_enabled=self.config.mqtt.enabled,
+                        mqtt_broker_host=self.config.mqtt.broker_host,
+                        mqtt_broker_port=self.config.mqtt.broker_port,
+                        mqtt_client_id=f"{self.config.mqtt.client_id}-{cam_id}",
+                        mqtt_topic=self.config.mqtt.topic,
+                        mqtt_telemetry_topic=self.config.mqtt.telemetry_topic,
+                        roi_polygon=roi_polygon,
+                        queue_wait_threshold=cam.get("queue_wait_threshold", self.config.mqtt.queue_wait_threshold),
+                        queue_roi_polygon=queue_roi_polygon,
+                        queue_dwell_seconds=cam.get("queue_dwell_seconds", self.config.mqtt.queue_dwell_seconds),
+                        queue_alert_people_threshold=cam.get("queue_alert_people_threshold", self.config.mqtt.queue_alert_people_threshold),
+                        queue_alert_duration_seconds=cam.get("queue_alert_duration_seconds", self.config.mqtt.queue_alert_duration_seconds),
+                        max_allowed_wait_seconds=cam.get("max_allowed_wait_seconds", self.config.mqtt.max_allowed_wait_seconds),
+                        cashier_count=cam.get("cashier_count", self.config.mqtt.cashier_count),
+                        service_rate_per_cashier_per_minute=cam.get("service_rate_per_cashier_per_minute", self.config.mqtt.service_rate_per_cashier_per_minute),
+                        mqtt_keep_alive=self.config.mqtt.keep_alive,
+                        camera_id=cam_id,
+                    )
+                    
+                    t = threading.Thread(target=camera_thread_loop, args=(pipeline, cam_id), daemon=True)
+                    t.start()
+                    self.active_pipelines[cam_id] = {"pipeline": pipeline, "thread": t}
+
+                self.logger.info("Multicámara corriendo. Presione 'q' para salir.")
+                
+                # Intentar API de control para la primera cámara si está habilitado
+                if self.config.control_api.enabled and self.active_pipelines:
+                    first_cam_id = list(self.active_pipelines.keys())[0]
+                    self.control_api_server = EdgeControlApiServer(
+                        pipeline=self.active_pipelines[first_cam_id]["pipeline"],
+                        host=self.config.control_api.host,
+                        port=self.config.control_api.port,
+                        edge_node_id=self.config.backend_api.edge_node_id,
+                        edge_api_key=self.config.backend_api.edge_api_key,
+                    )
+                    self.control_api_server.start()
+
+                # Esperar hasta que se detengan o el usuario presione 'q'
+                while any(p["pipeline"].is_running() for p in self.active_pipelines.values()):
+                    key = cv2.waitKey(1000) & 0xFF
+                    if key == ord("q"):
+                        self.logger.info("Cerrando multicámara...")
+                        break
+            else:
+                self.logger.info("Iniciando en MODO LOCAL (Single-Camera/Webcam)...")
+                self.pipeline = DetectionPipeline(
+                    camera_index=self.config.video.camera_index,
+                    video_source=self.config.video.video_source,
+                    frame_width=self.config.video.frame_width,
+                    frame_height=self.config.video.frame_height,
+                    target_fps=self.config.video.fps,
+                    model_name=self.config.video.model_name,
+                    confidence_threshold=0.5,
+                    draw_detections=True,
+                    mqtt_enabled=self.config.mqtt.enabled,
+                    mqtt_broker_host=self.config.mqtt.broker_host,
+                    mqtt_broker_port=self.config.mqtt.broker_port,
+                    mqtt_client_id=self.config.mqtt.client_id,
+                    mqtt_topic=self.config.mqtt.topic,
+                    mqtt_telemetry_topic=self.config.mqtt.telemetry_topic,
+                    roi_polygon=self.config.mqtt.roi_polygon,
+                    queue_wait_threshold=self.config.mqtt.queue_wait_threshold,
+                    queue_roi_polygon=self.config.mqtt.queue_roi_polygon,
+                    queue_dwell_seconds=self.config.mqtt.queue_dwell_seconds,
+                    queue_alert_people_threshold=self.config.mqtt.queue_alert_people_threshold,
+                    queue_alert_duration_seconds=self.config.mqtt.queue_alert_duration_seconds,
+                    max_allowed_wait_seconds=self.config.mqtt.max_allowed_wait_seconds,
+                    cashier_count=self.config.mqtt.cashier_count,
+                    service_rate_per_cashier_per_minute=self.config.mqtt.service_rate_per_cashier_per_minute,
+                    mqtt_keep_alive=self.config.mqtt.keep_alive,
+                    camera_id=self.config.mqtt.camera_id,
+                )
+
+                self.pipeline.start()
+
+                if self.config.control_api.enabled:
+                    self.control_api_server = EdgeControlApiServer(
+                        pipeline=self.pipeline,
+                        host=self.config.control_api.host,
+                        port=self.config.control_api.port,
+                        edge_node_id=self.config.backend_api.edge_node_id,
+                        edge_api_key=self.config.backend_api.edge_api_key,
+                    )
+                    self.control_api_server.start()
+
+                self.logger.info("Iniciando deteccion y telemetria (presiona 'q' para salir)...")
+
+                frame_count = 0
+                while self.pipeline.is_running():
+                    success, frame, metadata, detection_result = self.pipeline.process_frame()
+
+                    if not success or frame is None:
+                        self.logger.warning("Fallo la lectura de frame, reintentando...")
+                        continue
+
+                    self.pipeline.display_frame_with_info(frame, metadata, detection_result)
+
+                    frame_count += 1
+                    if frame_count % 30 == 0 and detection_result:
+                        self.logger.info(
+                            "Frame %s: %s personas detectadas | Inferencia: %.2fms",
+                            metadata.frame_number,
+                            detection_result.count(),
+                            detection_result.inference_time_ms,
+                        )
+
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord("q"):
+                        self.logger.info("Usuario presiono 'q'. Saliendo...")
+                        break
+
+                self.pipeline.print_stats()
 
         except CameraInitializationError as exc:
             self.logger.error("Error de inicializacion de camara: %s", exc)
@@ -184,6 +302,14 @@ class EdgeServiceRunner:
         if self.pipeline:
             self.pipeline.release()
             self.pipeline = None
+        if hasattr(self, "active_pipelines") and self.active_pipelines:
+            for cam_id, item in self.active_pipelines.items():
+                try:
+                    item["pipeline"].stop()
+                    item["pipeline"].release()
+                except Exception:
+                    pass
+            self.active_pipelines.clear()
 
         self.logger.info("=" * 70)
         self.logger.info("RetroVision Edge Service - DETENIDO")

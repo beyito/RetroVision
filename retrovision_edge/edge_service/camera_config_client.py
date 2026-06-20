@@ -28,6 +28,21 @@ class CameraConfigClient:
         self.edge_api_key = edge_api_key.strip()
         self.timeout_seconds = timeout_seconds
 
+    def list_cameras(self) -> list[dict[str, Any]]:
+        """Obtiene la lista de cámaras configuradas para este Edge Node."""
+        try:
+            res = self._request_json(
+                method="GET",
+                path="/api/cameras/",
+            )
+            if isinstance(res, list):
+                return res
+            elif isinstance(res, dict) and "results" in res:
+                return res["results"]
+            return []
+        except Exception:
+            return []
+
     def get_camera_profile(self, camera_id: str) -> Optional[dict[str, Any]]:
         """Obtiene el perfil de una cámara por su camera_id."""
         try:

@@ -830,73 +830,98 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
 
 
 function EdgeOnboardingCard({ node }) {
-  const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
   
-  const dockerCmd = `docker run -d --name retrovision-edge \\
-  -e EDGE_NODE_ID="${node.node_id}" \\
-  -e EDGE_API_KEY="${node.api_key}" \\
-  -e BACKEND_API_BASE_URL="${window.location.origin}" \\
-  -e SYNC_CAMERA_CONFIG="true" \\
-  -e MQTT_BROKER_HOST="${window.location.hostname}" \\
-  -v C:/retrovision_alerts:/app/alerts \\
-  retrovision/edge:latest`;
+  const handleCopyId = () => {
+    navigator.clipboard.writeText(node.node_id);
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(dockerCmd);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopyKey = () => {
+    navigator.clipboard.writeText(node.api_key);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2000);
   };
 
   return (
     <div className="rounded-[28px] border border-cyan-500/30 bg-[#0d1627]/90 p-6 shadow-xl relative overflow-hidden transition-all duration-300">
       <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="flex items-center gap-3">
-        <div className="bg-cyan-500/10 p-2.5 rounded-2xl border border-cyan-500/20">
-          <Cpu className="w-6 h-6 text-cyan-400" />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="bg-cyan-500/10 p-2.5 rounded-2xl border border-cyan-500/20">
+            <Cpu className="w-6 h-6 text-cyan-400" />
+          </div>
+          <div>
+            <h4 className="text-lg font-black text-white">🚀 Guía de Instalación del Agente de Cámaras</h4>
+            <p className="text-xs text-slate-400">Sigue estos sencillos pasos para activar el procesamiento de video en tu local.</p>
+          </div>
         </div>
-        <div>
-          <h4 className="text-lg font-black text-white">🚀 Guía de Despliegue en tu Propio Hardware</h4>
-          <p className="text-xs text-slate-400">Ejecuta el agente inteligente en tu servidor o PC local (SaaS BYOH)</p>
+
+        <a
+          href={`${API_BASE_URL}/static/retrovision_edge.zip`}
+          download
+          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-950 hover:bg-cyan-400 transition cursor-pointer text-center"
+        >
+          <span>📥 Descargar Agente (.ZIP)</span>
+        </a>
+      </div>
+
+      <div className="mt-6 grid gap-6 md:grid-cols-2">
+        <div className="rounded-2xl bg-white/5 border border-white/8 p-4">
+          <p className="text-xs uppercase tracking-wider font-bold text-slate-400">ID del Nodo</p>
+          <div className="mt-2 flex items-center justify-between gap-3 bg-[#060a12] border border-white/8 rounded-xl p-3">
+            <code className="text-sm font-mono text-cyan-200 select-all">{node.node_id}</code>
+            <button
+              type="button"
+              onClick={handleCopyId}
+              className="text-[10px] uppercase font-bold text-cyan-400 hover:text-cyan-300 transition cursor-pointer"
+            >
+              {copiedId ? '¡Copiado!' : 'Copiar'}
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-white/5 border border-white/8 p-4">
+          <p className="text-xs uppercase tracking-wider font-bold text-slate-400">Clave de API (API Key)</p>
+          <div className="mt-2 flex items-center justify-between gap-3 bg-[#060a12] border border-white/8 rounded-xl p-3">
+            <code className="text-sm font-mono text-cyan-200 select-all">{node.api_key.substring(0, 15)}...</code>
+            <button
+              type="button"
+              onClick={handleCopyKey}
+              className="text-[10px] uppercase font-bold text-cyan-400 hover:text-cyan-300 transition cursor-pointer"
+            >
+              {copiedKey ? '¡Copiado!' : 'Copiar'}
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="mt-6 grid gap-6 md:grid-cols-3">
-        <div className="rounded-2xl bg-white/5 border border-white/6 p-4">
+      <div className="mt-6 grid gap-6 md:grid-cols-4">
+        <div className="rounded-2xl bg-white/3 border border-white/6 p-4">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-300">1</span>
-          <h5 className="mt-3 font-bold text-white text-sm">Instalar Docker</h5>
-          <p className="mt-1 text-xs text-slate-400">Instala Docker Desktop en el equipo local donde se conectarán las cámaras.</p>
+          <h5 className="mt-3 font-bold text-white text-sm">Descargar</h5>
+          <p className="mt-1 text-xs text-slate-400">Descarga el archivo ZIP del agente con el botón de arriba y descomprímelo en tu computadora.</p>
         </div>
 
-        <div className="rounded-2xl bg-white/5 border border-white/6 p-4">
+        <div className="rounded-2xl bg-white/3 border border-white/6 p-4">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-300">2</span>
-          <h5 className="mt-3 font-bold text-white text-sm">Ejecutar Agente</h5>
-          <p className="mt-1 text-xs text-slate-400">Copia y corre el comando de abajo en la terminal de tu hardware local.</p>
+          <h5 className="mt-3 font-bold text-white text-sm">Ejecutar Script</h5>
+          <p className="mt-1 text-xs text-slate-400">Abre la carpeta y haz doble clic en <code>iniciar_retrovision.bat</code> (o corre <code>iniciar_retrovision.sh</code> si usas Linux).</p>
         </div>
 
-        <div className="rounded-2xl bg-white/5 border border-white/6 p-4">
+        <div className="rounded-2xl bg-white/3 border border-white/6 p-4">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-300">3</span>
-          <h5 className="mt-3 font-bold text-white text-sm">Vincular Cámaras</h5>
-          <p className="mt-1 text-xs text-slate-400">Ve a la pestaña "Cámaras" y registra los streams RTSP locales para iniciar el análisis.</p>
+          <h5 className="mt-3 font-bold text-white text-sm">Pegar Credenciales</h5>
+          <p className="mt-1 text-xs text-slate-400">Copia el ID del Nodo y la Clave de API de arriba e ingrésalos en la ventana de la consola cuando te lo pida.</p>
         </div>
-      </div>
 
-      <div className="mt-6">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs uppercase tracking-wider font-bold text-slate-300 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            Comando de Inicio (Docker CLI)
-          </p>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex items-center gap-1 px-3 py-1 text-xs bg-cyan-500/10 hover:bg-cyan-500/25 border border-cyan-500/30 hover:border-cyan-500 rounded-lg font-bold text-cyan-300 transition cursor-pointer"
-          >
-            {copied ? '¡Copiado!' : 'Copiar Comando'}
-          </button>
+        <div className="rounded-2xl bg-white/3 border border-white/6 p-4">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-300">4</span>
+          <h5 className="mt-3 font-bold text-white text-sm">Configurar Cámaras</h5>
+          <p className="mt-1 text-xs text-slate-400">Una vez conectado, ve a la pestaña "Cámaras" en esta consola web para añadir tus streams locales.</p>
         </div>
-        <pre className="p-4 rounded-2xl bg-[#060a12] border border-white/8 text-[11px] text-cyan-100 font-mono overflow-x-auto select-all leading-relaxed whitespace-pre-wrap break-all">
-          {dockerCmd}
-        </pre>
       </div>
     </div>
   );

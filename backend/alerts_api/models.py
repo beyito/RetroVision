@@ -15,6 +15,8 @@ class Tenant(models.Model):
 
     name = models.CharField(max_length=128, unique=True)
     slug = models.SlugField(max_length=128, unique=True)
+    max_cameras = models.PositiveIntegerField(default=5)
+    api_key = models.CharField(max_length=128, unique=True, default=generate_api_key)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.core.cache import cache
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from paho.mqtt import client as mqtt
@@ -54,8 +55,14 @@ class Command(BaseCommand):
         def callback(client: mqtt.Client, userdata: Any, flags: Any, rc: int) -> None:
             if rc == 0:
                 self.stdout.write(self.style.SUCCESS("Connected to MQTT broker"))
-                client.subscribe([(topic, 1), (telemetry_topic, 1)])
-                self.stdout.write(self.style.NOTICE(f"Subscribed to {topic} and {telemetry_topic}"))
+                client.subscribe([
+                    (topic, 1),
+                    (telemetry_topic, 1),
+                    ("retrovision/cloud/+/snapshot/response", 1)
+                ])
+                self.stdout.write(
+                    self.style.NOTICE(f"Subscribed to {topic}, {telemetry_topic} and retrovision/cloud/+/snapshot/response")
+                )
                 return
 
             LOGGER.error("MQTT connection failed with rc=%s", rc)
@@ -142,6 +149,12 @@ class Command(BaseCommand):
                     coordenadas_json={"points": heatmap_points},
                 )
                 LOGGER.info("Heatmap saved id=%s camera_id=%s", heatmap.id, heatmap.camera_id)
+            elif topic.startswith("retrovision/cloud/") and topic.endswith("/snapshot/response"):
+                correlation_id = payload.get("correlation_id")
+                if correlation_id:
+                    cache_key = f"snapshot_response:{correlation_id}"
+                    cache.set(cache_key, payload, timeout=30)
+                    LOGGER.info("Received snapshot response for correlation_id=%s, saved to cache", correlation_id)
         except KeyError as exc:
             LOGGER.warning("MQTT message missing required field: %s", exc)
         except json.JSONDecodeError:

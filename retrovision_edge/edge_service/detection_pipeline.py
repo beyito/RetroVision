@@ -143,6 +143,7 @@ class DetectionPipeline:
         self._latest_frame_lock = threading.Lock()
         self._latest_frame_jpeg: Optional[bytes] = None
         self._latest_raw_frame_jpeg: Optional[bytes] = None
+        self._latest_raw_frame: Optional[np.ndarray] = None
         
         self._initialize_pipeline(model_name, confidence_threshold)
     
@@ -645,10 +646,37 @@ class DetectionPipeline:
             return
         with self._latest_frame_lock:
             self._latest_raw_frame_jpeg = encoded.tobytes()
+            self._latest_raw_frame = frame.copy()
 
     def get_latest_frame_jpeg(self) -> Optional[bytes]:
         with self._latest_frame_lock:
             return self._latest_raw_frame_jpeg or self._latest_frame_jpeg
+
+    def get_resized_snapshot_jpeg(self) -> Optional[bytes]:
+        with self._latest_frame_lock:
+            if self._latest_raw_frame is None:
+                raw_jpeg = self._latest_raw_frame_jpeg or self._latest_frame_jpeg
+                if raw_jpeg:
+                    nparr = np.frombuffer(raw_jpeg, np.uint8)
+                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                else:
+                    return None
+            else:
+                img = self._latest_raw_frame.copy()
+
+        if img is None:
+            return None
+
+        h, w = img.shape[:2]
+        if w > 800:
+            new_w = 800
+            new_h = int(h * (800 / w))
+            img = cv2.resize(img, (new_w, new_h))
+
+        success, encoded = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+        if success:
+            return encoded.tobytes()
+        return None
     
     def get_stats(self) -> PipelineStats:
         """Retorna estadísticas del pipeline."""

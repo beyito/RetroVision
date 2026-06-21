@@ -32,6 +32,8 @@ services:
     command: daphne -b 0.0.0.0 -p 8000 retrovision_core.asgi:application
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
     env_file:
       - ./backend/.env
     depends_on:
@@ -47,6 +49,8 @@ services:
     container_name: retrovision-mqtt-worker
     restart: always
     command: python manage.py listen_mqtt
+    volumes:
+      - ./backend:/app
     env_file:
       - ./backend/.env
     depends_on:

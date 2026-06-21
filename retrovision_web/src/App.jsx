@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 
 import CameraConfigurationPanel from './components/CameraConfigurationPanel';
+import RegisterScreen from './components/RegisterScreen';
 import Dashboard from './Dashboard';
 import { API_BASE_URL } from './config';
 
@@ -74,7 +75,7 @@ function ScopeBadge({ profile }) {
 }
 
 
-function LoginScreen({ credentials, onChange, onSubmit, loading, error }) {
+function LoginScreen({ credentials, onChange, onSubmit, loading, error, onRegisterClick }) {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(6,182,212,0.18),_transparent_35%),linear-gradient(180deg,#07111e_0%,#0b0f19_100%)] text-gray-100 flex items-center justify-center px-6 py-10">
       <div className="w-full max-w-5xl grid lg:grid-cols-[1.15fr_0.85fr] gap-8">
@@ -146,10 +147,20 @@ function LoginScreen({ credentials, onChange, onSubmit, loading, error }) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition hover:bg-cyan-400 disabled:opacity-60"
+              className="w-full rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition hover:bg-cyan-400 disabled:opacity-60 cursor-pointer"
             >
               {loading ? 'Ingresando...' : 'Entrar al sistema'}
             </button>
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={onRegisterClick}
+                className="text-xs text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                ¿No tienes cuenta? Regístrate y contrata
+              </button>
+            </div>
           </form>
         </section>
       </div>
@@ -296,7 +307,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
     cameras: [],
   });
   const [forms, setForms] = useState({
-    tenants: { name: '', slug: '' },
+    tenants: { name: '', slug: '', max_cameras: '5', is_active: 'true' },
     stores: { tenant: '', name: '', code: '', address: '' },
     edgeNodes: { store: '', node_id: '', display_name: '', control_api_base_url: '' },
     cameras: {
@@ -396,7 +407,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
 
   const resetSectionForm = (section) => {
     const defaults = {
-      tenants: { name: '', slug: '' },
+      tenants: { name: '', slug: '', max_cameras: '5', is_active: 'true' },
       stores: { tenant: '', name: '', code: '', address: '' },
       edgeNodes: { store: '', node_id: '', display_name: '', control_api_base_url: '' },
       cameras: {
@@ -428,7 +439,15 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
   const selectRecord = (section, item) => {
     setSelectedRecords((previous) => ({ ...previous, [section]: item }));
     if (section === 'tenants') {
-      setForms((previous) => ({ ...previous, tenants: { name: item.name || '', slug: item.slug || '' } }));
+      setForms((previous) => ({
+        ...previous,
+        tenants: {
+          name: item.name || '',
+          slug: item.slug || '',
+          max_cameras: String(item.max_cameras ?? '5'),
+          is_active: String(item.is_active ?? 'true'),
+        },
+      }));
     }
     if (section === 'stores') {
       setForms((previous) => ({
@@ -539,19 +558,35 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
       columns: [
         { key: 'name', label: 'Nombre' },
         { key: 'slug', label: 'Slug' },
-        { key: 'is_active', label: 'Activo', render: (item) => (item.is_active ? 'Si' : 'No') },
+        { key: 'max_cameras', label: 'Límite Cámaras' },
+        { key: 'is_active', label: 'Activo', render: (item) => (item.is_active ? 'Sí' : 'No') },
       ],
       fields: [
         { name: 'name', label: 'Nombre' },
         { name: 'slug', label: 'Slug' },
+        { name: 'max_cameras', label: 'Máx. Cámaras (Límite)', type: 'number' },
+        {
+          name: 'is_active',
+          label: 'Estado Suscripción',
+          type: 'select',
+          options: [
+            { value: 'true', label: 'Sí - Activo / Al día' },
+            { value: 'false', label: 'No - Suspendido / Inactivo' },
+          ],
+        },
       ],
       submit: (event) => {
         event.preventDefault();
+        const payload = {
+          ...forms.tenants,
+          max_cameras: Number(forms.tenants.max_cameras || 5),
+          is_active: forms.tenants.is_active === 'true' || forms.tenants.is_active === true,
+        };
         if (selectedRecords.tenants) {
-          updateRecord(`/api/tenants/${selectedRecords.tenants.id}/`, forms.tenants, 'tenants');
+          updateRecord(`/api/tenants/${selectedRecords.tenants.id}/`, payload, 'tenants');
           return;
         }
-        createRecord('/api/tenants/', forms.tenants, 'tenants', { name: '', slug: '' });
+        createRecord('/api/tenants/', payload, 'tenants', { name: '', slug: '', max_cameras: '5', is_active: 'true' });
       },
       deleteAction: () => deleteRecord(`/api/tenants/${selectedRecords.tenants.id}/`, 'tenants'),
     },
@@ -591,15 +626,13 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
       columns: [
         { key: 'tenant_name', label: 'Tenant' },
         { key: 'store_name', label: 'Tienda' },
-        { key: 'node_id', label: 'Node ID' },
-        { key: 'control_api_base_url', label: 'Control API URL' },
+        { key: 'node_id', label: 'ID del Nodo' },
         { key: 'api_key', label: 'API Key' },
       ],
       fields: [
         { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
-        { name: 'node_id', label: 'Node ID' },
+        { name: 'node_id', label: 'ID del Nodo' },
         { name: 'display_name', label: 'Nombre visible' },
-        { name: 'control_api_base_url', label: 'Control API URL' },
       ],
       submit: (event) => {
         event.preventDefault();
@@ -764,27 +797,107 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           roiFields={cameraRoiFields}
         />
       ) : activeSection ? (
-        <ManagementSection
-          title={activeSection.title}
-          subtitle={activeSection.subtitle}
-          items={activeSection.items}
-          columns={activeSection.columns}
-          formFields={activeSection.fields}
-          formState={forms[activeModule]}
-          onChange={(field, value) => handleFormChange(activeModule, field, value)}
-          onSubmit={activeSection.submit}
-          onSelectItem={(item) => selectRecord(activeModule, item)}
-          selectedItemKey={selectedRecords[activeModule]?.id || selectedRecords[activeModule]?.camera_id || selectedRecords[activeModule]?.node_id || selectedRecords[activeModule]?.slug || selectedRecords[activeModule]?.code}
-          onReset={() => resetSectionForm(activeModule)}
-          onDelete={() => {
-            if (selectedRecords[activeModule] && window.confirm('Esta accion eliminara el registro seleccionado. Deseas continuar?')) {
-              activeSection.deleteAction();
-            }
-          }}
-          isEditing={Boolean(selectedRecords[activeModule])}
-          snapshotUrl={activeModule === 'cameras' ? cameraSnapshotUrl : ''}
-        />
+        <div className="space-y-8 animate-fade-in">
+          <ManagementSection
+            title={activeSection.title}
+            subtitle={activeSection.subtitle}
+            items={activeSection.items}
+            columns={activeSection.columns}
+            formFields={activeSection.fields}
+            formState={forms[activeModule]}
+            onChange={(field, value) => handleFormChange(activeModule, field, value)}
+            onSubmit={activeSection.submit}
+            onSelectItem={(item) => selectRecord(activeModule, item)}
+            selectedItemKey={selectedRecords[activeModule]?.id || selectedRecords[activeModule]?.camera_id || selectedRecords[activeModule]?.node_id || selectedRecords[activeModule]?.slug || selectedRecords[activeModule]?.code}
+            onReset={() => resetSectionForm(activeModule)}
+            onDelete={() => {
+              if (selectedRecords[activeModule] && window.confirm('Esta accion eliminara el registro seleccionado. Deseas continuar?')) {
+                activeSection.deleteAction();
+              }
+            }}
+            isEditing={Boolean(selectedRecords[activeModule])}
+            snapshotUrl={activeModule === 'cameras' ? cameraSnapshotUrl : ''}
+          />
+          
+          {activeModule === 'edgeNodes' && selectedRecords.edgeNodes && (
+            <EdgeOnboardingCard node={selectedRecords.edgeNodes} />
+          )}
+        </div>
       ) : null}
+    </div>
+  );
+}
+
+
+function EdgeOnboardingCard({ node }) {
+  const [copied, setCopied] = useState(false);
+  
+  const dockerCmd = `docker run -d --name retrovision-edge \\
+  -e EDGE_NODE_ID="${node.node_id}" \\
+  -e EDGE_API_KEY="${node.api_key}" \\
+  -e BACKEND_API_BASE_URL="${window.location.origin}" \\
+  -e SYNC_CAMERA_CONFIG="true" \\
+  -e MQTT_BROKER_HOST="${window.location.hostname}" \\
+  -v C:/retrovision_alerts:/app/alerts \\
+  retrovision/edge:latest`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(dockerCmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="rounded-[28px] border border-cyan-500/30 bg-[#0d1627]/90 p-6 shadow-xl relative overflow-hidden transition-all duration-300">
+      <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="flex items-center gap-3">
+        <div className="bg-cyan-500/10 p-2.5 rounded-2xl border border-cyan-500/20">
+          <Cpu className="w-6 h-6 text-cyan-400" />
+        </div>
+        <div>
+          <h4 className="text-lg font-black text-white">🚀 Guía de Despliegue en tu Propio Hardware</h4>
+          <p className="text-xs text-slate-400">Ejecuta el agente inteligente en tu servidor o PC local (SaaS BYOH)</p>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 md:grid-cols-3">
+        <div className="rounded-2xl bg-white/5 border border-white/6 p-4">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-300">1</span>
+          <h5 className="mt-3 font-bold text-white text-sm">Instalar Docker</h5>
+          <p className="mt-1 text-xs text-slate-400">Instala Docker Desktop en el equipo local donde se conectarán las cámaras.</p>
+        </div>
+
+        <div className="rounded-2xl bg-white/5 border border-white/6 p-4">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-300">2</span>
+          <h5 className="mt-3 font-bold text-white text-sm">Ejecutar Agente</h5>
+          <p className="mt-1 text-xs text-slate-400">Copia y corre el comando de abajo en la terminal de tu hardware local.</p>
+        </div>
+
+        <div className="rounded-2xl bg-white/5 border border-white/6 p-4">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-300">3</span>
+          <h5 className="mt-3 font-bold text-white text-sm">Vincular Cámaras</h5>
+          <p className="mt-1 text-xs text-slate-400">Ve a la pestaña "Cámaras" y registra los streams RTSP locales para iniciar el análisis.</p>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs uppercase tracking-wider font-bold text-slate-300 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            Comando de Inicio (Docker CLI)
+          </p>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex items-center gap-1 px-3 py-1 text-xs bg-cyan-500/10 hover:bg-cyan-500/25 border border-cyan-500/30 hover:border-cyan-500 rounded-lg font-bold text-cyan-300 transition cursor-pointer"
+          >
+            {copied ? '¡Copiado!' : 'Copiar Comando'}
+          </button>
+        </div>
+        <pre className="p-4 rounded-2xl bg-[#060a12] border border-white/8 text-[11px] text-cyan-100 font-mono overflow-x-auto select-all leading-relaxed whitespace-pre-wrap break-all">
+          {dockerCmd}
+        </pre>
+      </div>
     </div>
   );
 }
@@ -792,6 +905,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
 
 export default function App() {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
+  const [screen, setScreen] = useState('login');
   const [auth, setAuth] = useState(() => {
     try {
       const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
@@ -874,6 +988,18 @@ export default function App() {
   };
 
   if (!auth.token || !profile) {
+    if (screen === 'register') {
+      return (
+        <RegisterScreen
+          onBackToLogin={() => setScreen('login')}
+          onRegisterSuccess={(nextAuth) => {
+            setAuth(nextAuth);
+            setScreen('login');
+          }}
+        />
+      );
+    }
+    
     return (
       <LoginScreen
         credentials={credentials}
@@ -881,12 +1007,19 @@ export default function App() {
         onSubmit={handleLogin}
         loading={loading}
         error={authError}
+        onRegisterClick={() => setScreen('register')}
       />
     );
   }
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.09),_transparent_30%),linear-gradient(180deg,#09101d_0%,#0b0f19_100%)] text-gray-100">
+      {profile?.tenant_is_active === false && (
+        <div className="bg-gradient-to-r from-red-950 via-red-900 to-red-950 text-red-200 border-b border-red-500/30 px-6 py-3.5 text-center text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2 animate-pulse z-50 sticky top-0">
+          <Shield className="w-4 h-4 text-red-400 shrink-0" />
+          <span>⚠️ Suscripción de {profile.tenant_name} Inactiva o Suspendida. El procesamiento de alertas en tus cámaras está pausado.</span>
+        </div>
+      )}
       <header className="border-b border-gray-800/85 bg-[#0f1524]/80 backdrop-blur-md sticky top-0 z-40 px-6 py-4">
         <div className="max-w-[1600px] mx-auto flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-3">
@@ -900,6 +1033,12 @@ export default function App() {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            {profile?.tenant_max_cameras !== undefined && (
+              <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-xs">
+                <p className="font-semibold uppercase tracking-[0.22em] text-cyan-300">Licencia SaaS</p>
+                <p className="mt-0.5 text-white font-mono">Máx. {profile.tenant_max_cameras} Cámaras</p>
+              </div>
+            )}
             <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
               <p className="font-semibold text-white">{profile.username}</p>
               <p className="text-xs text-slate-400">{roleLabel}</p>

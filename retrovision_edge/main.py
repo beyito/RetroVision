@@ -80,6 +80,12 @@ class EdgeServiceRunner:
         self.pipeline: DetectionPipeline | None = None
         self.active_pipelines = {}
         self.control_api_server: EdgeControlApiServer | None = None
+        self.control_mqtt_subscriber = None
+        
+        if self.config.mqtt.enabled:
+            from edge_service.control_subscriber import EdgeControlMqttSubscriber
+            self.control_mqtt_subscriber = EdgeControlMqttSubscriber(runner=self)
+
         self._setup_signal_handlers()
 
     def _setup_signal_handlers(self) -> None:
@@ -98,6 +104,9 @@ class EdgeServiceRunner:
             self.logger.info("Tracking + ROI Colas + Heatmaps + Snapshot API")
             self.logger.info("Configuracion cargada desde: %s", self.env_file_path)
             self.logger.info("=" * 70)
+
+            if self.control_mqtt_subscriber:
+                self.control_mqtt_subscriber.start()
 
             # Si sync_camera_config está habilitado, intentamos conectarnos al backend
             sync_enabled = self.config.backend_api.sync_camera_config
@@ -296,6 +305,9 @@ class EdgeServiceRunner:
             self._cleanup()
 
     def _cleanup(self) -> None:
+        if self.control_mqtt_subscriber:
+            self.control_mqtt_subscriber.stop()
+            self.control_mqtt_subscriber = None
         if self.control_api_server:
             self.control_api_server.stop()
             self.control_api_server = None

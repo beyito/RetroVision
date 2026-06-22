@@ -165,6 +165,8 @@ class EdgeServiceRunner:
                     
                     roi_polygon = cam.get("roi_polygon") or self.config.mqtt.roi_polygon
                     queue_roi_polygon = cam.get("queue_roi_polygon") or roi_polygon
+                    counting_line = cam.get("counting_line") or []
+                    counting_line_direction = cam.get("counting_line_direction") or "forward"
                     
                     self.logger.info("Inicializando pipeline para %s (source: %s)...", cam_id, video_src)
                     pipeline = DetectionPipeline(
@@ -193,6 +195,8 @@ class EdgeServiceRunner:
                         service_rate_per_cashier_per_minute=cam.get("service_rate_per_cashier_per_minute", self.config.mqtt.service_rate_per_cashier_per_minute),
                         mqtt_keep_alive=self.config.mqtt.keep_alive,
                         camera_id=cam_id,
+                        counting_line=counting_line,
+                        counting_line_direction=counting_line_direction,
                     )
                     
                     t = threading.Thread(target=camera_thread_loop, args=(pipeline, cam_id), daemon=True)

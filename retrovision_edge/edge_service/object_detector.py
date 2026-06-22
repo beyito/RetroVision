@@ -151,40 +151,48 @@ class ObjectDetector:
         self.confidence_threshold = confidence_threshold
         self.device = device
         self._model = None
+        self._base_model = None
+        
+        # Check if the loaded model is custom (e.g. best.pt) or standard pre-trained model
+        # We load yolov8n.pt as secondary model if custom model is used, for high-accuracy person tracking
+        standard_models = ["yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt", "yolov8x.pt"]
+        is_standard = any(std_name in model_name.lower() for std_name in standard_models)
+        self.use_dual_model = not is_standard
         
         self._load_model()
     
     def _load_model(self) -> None:
         """
-        Carga el modelo YOLOv8 desde ultralytics.
-        
-        Raises:
-            FrameProcessingError: Si el modelo no se puede descargar o cargar
+        Carga el modelo YOLOv8 principal y el secundario si corresponde.
         """
         try:
             self.logger.info(
-                f"Cargando modelo YOLOv8: {self.model_name} (device={self.device})..."
+                f"Cargando modelo YOLOv8 principal: {self.model_name} (device={self.device})..."
             )
-            
             self._model = YOLO(self.model_name)
-            
             if self._model is None:
                 raise FrameProcessingError(
-                    f"No se pudo cargar el modelo {self.model_name}"
+                    f"No se pudo cargar el modelo principal {self.model_name}"
                 )
-            
-            # Validar que el modelo se cargó correctamente
             self._model.to(self.device)
             
-            self.logger.info(
-                f"Modelo YOLOv8 cargado exitosamente. "
-                f"Resolución de entrada: {640}"
-            )
+            if self.use_dual_model:
+                self.logger.info(
+                    "Detección dual activada. Cargando modelo YOLOv8 base (yolov8n.pt) para seguimiento de personas..."
+                )
+                self._base_model = YOLO("yolov8n.pt")
+                if self._base_model is None:
+                    raise FrameProcessingError(
+                        "No se pudo cargar el modelo base secundario yolov8n.pt"
+                    )
+                self._base_model.to(self.device)
+            
+            self.logger.info("Modelos YOLOv8 cargados exitosamente.")
             
         except Exception as e:
-            self.logger.error(f"Error al cargar modelo YOLOv8: {e}")
+            self.logger.error(f"Error al cargar modelos YOLOv8: {e}")
             raise FrameProcessingError(
-                f"No se pudo cargar el modelo YOLOv8: {str(e)}"
+                f"No se pudieron cargar los modelos YOLOv8: {str(e)}"
             ) from e
     
     def detect(self, frame: np.ndarray) -> DetectionResult:

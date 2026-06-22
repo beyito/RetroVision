@@ -8,6 +8,7 @@ BehaviorAnalyzer, RingBuffer, AlertWriter y AlertPublisher.
 
 import logging
 import threading
+import math
 from typing import Optional, Tuple, Union
 from dataclasses import dataclass
 import time
@@ -73,6 +74,8 @@ class DetectionPipeline:
         service_rate_per_cashier_per_minute: float = 12.0,
         mqtt_keep_alive: int = 60,
         camera_id: str = "camera-01",
+        counting_line: Optional[list] = None,
+        counting_line_direction: str = "forward",
     ) -> None:
         """
         Inicializa el pipeline de detección.
@@ -113,6 +116,14 @@ class DetectionPipeline:
         self.personas_salientes_count = 0
         self.recent_heatmap_points = []
         self.last_telemetry_publish_time = time.time()
+        
+        # Counting line properties & state for hysteresis & memory cleanup
+        self.counting_line = counting_line or []
+        self.counting_line_direction = counting_line_direction or "forward"
+        self.track_sides = {}
+        self.last_cross_frame = {}
+        self.last_seen_frame = {}
+        self.frame_counter = 0
         
         # Heatmap float32 accumulator
         self.heatmap_accumulator = np.zeros((frame_height, frame_width), dtype=np.float32)
@@ -231,6 +242,14 @@ class DetectionPipeline:
     def is_running(self) -> bool:
         """Retorna True si el pipeline está activo."""
         return self._is_running
+
+    def _ccw(self, A, B, C):
+        """Devuelve True si los puntos A, B, C están en sentido antihorario."""
+        return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+
+    def _segments_intersect(self, A, B, C, D):
+        """Verifica si el segmento AB intersecta con el segmento CD."""
+        return self._ccw(A, C, D) != self._ccw(B, C, D) and self._ccw(A, B, C) != self._ccw(A, B, D)
         
     def process_frame(
         self,
@@ -322,8 +341,16 @@ class DetectionPipeline:
                             self.logger.debug(f"Posture estimation failed for detection: {e}")
             
             # --- PHASE 5: SPATIAL ANALYTICS AND TRACKING ---
+            self.frame_counter += 1
             current_time = time.time()
             detected_track_ids = set()
+            h_frame, w_frame = frame.shape[0], frame.shape[1]
+
+            # Scale normalized counting line coordinates to actual frame resolution
+            has_counting_line = len(self.counting_line) == 2
+            if has_counting_line:
+                P1 = (int(self.counting_line[0][0] * w_frame), int(self.counting_line[0][1] * h_frame))
+                P2 = (int(self.counting_line[1][0] * w_frame), int(self.counting_line[1][1] * h_frame))
 
             # Draw ROI Queue Area polygon
             cv2.polylines(frame_to_display, [self.queue_roi_poly_np], isClosed=True, color=(0, 165, 255), thickness=2)
@@ -354,6 +381,7 @@ class DetectionPipeline:
                     tid = det.track_id
                     detected_track_ids.add(tid)
                     self.last_seen_time[tid] = current_time
+                    self.last_seen_frame[tid] = self.frame_counter
 
                     # 1. Update Trajectory trail history
                     if tid not in self.trajectory_history:
@@ -394,10 +422,43 @@ class DetectionPipeline:
                         if tid in self.roi_entry_times:
                             self.roi_entry_times.pop(tid)
 
-                    # 3. Calculate Incoming Flow
-                    if tid not in self.seen_track_ids:
-                        self.seen_track_ids.add(tid)
-                        self.personas_entrantes_count += 1
+                    # 3. Calculate Traffic Flow (Line Crossing or Default Fallback)
+                    if has_counting_line:
+                        # Determinant to check which side of directed segment P1->P2 centroid is on
+                        side_val = (cx - P1[0]) * (P2[1] - P1[1]) - (cy - P1[1]) * (P2[0] - P1[0])
+                        side = 1 if side_val >= 0 else -1
+
+                        if tid not in self.track_sides:
+                            self.track_sides[tid] = side
+                        else:
+                            prev_side = self.track_sides[tid]
+                            # Only evaluate if trail history is at least 5 frames (flicker prevention)
+                            if side != prev_side and len(trail) >= 5:
+                                last_cross = self.last_cross_frame.get(tid, 0)
+                                # 60 frame cooldown (~2 seconds hysteresis) to avoid duplicate counts
+                                if self.frame_counter - last_cross > 60:
+                                    P_curr = (int(cx), int(cy))
+                                    P_prev = trail[-2] if len(trail) >= 2 else P_curr
+                                    if self._segments_intersect(P_prev, P_curr, P1, P2):
+                                        if side == 1:
+                                            # Crossed from Side -1 to Side 1
+                                            if self.counting_line_direction == "forward":
+                                                self.personas_entrantes_count += 1
+                                            else:
+                                                self.personas_salientes_count += 1
+                                        else:
+                                            # Crossed from Side 1 to Side -1
+                                            if self.counting_line_direction == "forward":
+                                                self.personas_salientes_count += 1
+                                            else:
+                                                self.personas_entrantes_count += 1
+                                        self.last_cross_frame[tid] = self.frame_counter
+                            self.track_sides[tid] = side
+                    else:
+                        # Fallback heuristic: Count when first seen
+                        if tid not in self.seen_track_ids:
+                            self.seen_track_ids.add(tid)
+                            self.personas_entrantes_count += 1
 
             # Clean up missing track IDs (lost longer than 5 seconds)
             for tid in list(self.last_seen_time.keys()):
@@ -409,7 +470,45 @@ class DetectionPipeline:
                         self.queue_candidate_since.pop(tid)
                     if tid in self.roi_entry_times:
                         self.roi_entry_times.pop(tid)
-                    self.personas_salientes_count += 1
+                    if not has_counting_line:
+                        # Fallback heuristic: Count exit when lost
+                        self.personas_salientes_count += 1
+
+            # Memory cleanup: purge obsolete track IDs from sides & cross states after 50 frames of invisibility
+            for tid in list(self.last_seen_frame.keys()):
+                if self.frame_counter - self.last_seen_frame[tid] > 50:
+                    self.last_seen_frame.pop(tid)
+                    if tid in self.track_sides:
+                        self.track_sides.pop(tid)
+                    if tid in self.last_cross_frame:
+                        self.last_cross_frame.pop(tid)
+
+            # Draw visual counting line & direction arrow in OpenCV
+            if has_counting_line:
+                cv2.line(frame_to_display, P1, P2, (0, 255, 255), 3) # Yellow line
+                dx = P2[0] - P1[0]
+                dy = P2[1] - P1[1]
+                dist = math.sqrt(dx**2 + dy**2)
+                if dist > 0:
+                    nx = -dy / dist
+                    ny = dx / dist
+                    if self.counting_line_direction == 'backward':
+                        nx = -nx
+                        ny = -ny
+                    mid_x = (P1[0] + P2[0]) // 2
+                    mid_y = (P1[1] + P2[1]) // 2
+                    arrow_end_x = int(mid_x + nx * 40)
+                    arrow_end_y = int(mid_y + ny * 40)
+                    cv2.arrowedLine(frame_to_display, (mid_x, mid_y), (arrow_end_x, arrow_end_y), (0, 255, 255), 2, tipLength=0.3)
+                    cv2.putText(
+                        frame_to_display,
+                        "ENTRADA",
+                        (arrow_end_x + 5, arrow_end_y + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 255),
+                        2,
+                    )
 
             # Draw visual Heatmap Blend Overlay
             if np.max(self.heatmap_accumulator) > 0:

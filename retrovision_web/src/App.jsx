@@ -324,6 +324,8 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
       max_allowed_wait_seconds: '120',
       cashier_count: '1',
       service_rate_per_cashier_per_minute: '12',
+      counting_line: [],
+      counting_line_direction: 'forward',
     },
   });
   const [selectedRecords, setSelectedRecords] = useState({
@@ -424,6 +426,8 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
         max_allowed_wait_seconds: '120',
         cashier_count: '1',
         service_rate_per_cashier_per_minute: '12',
+        counting_line: [],
+        counting_line_direction: 'forward',
       },
     };
     setForms((previous) => ({ ...previous, [section]: defaults[section] }));
@@ -492,6 +496,8 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           max_allowed_wait_seconds: String(item.max_allowed_wait_seconds ?? '120'),
           cashier_count: String(item.cashier_count ?? '1'),
           service_rate_per_cashier_per_minute: String(item.service_rate_per_cashier_per_minute ?? '12'),
+          counting_line: item.counting_line || [],
+          counting_line_direction: item.counting_line_direction || 'forward',
         },
       }));
     }
@@ -683,6 +689,8 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           service_rate_per_cashier_per_minute: Number(forms.cameras.service_rate_per_cashier_per_minute || 12),
           queue_roi_polygon: forms.cameras.queue_roi_polygon,
           roi_polygon: forms.cameras.queue_roi_polygon,
+          counting_line: forms.cameras.counting_line,
+          counting_line_direction: forms.cameras.counting_line_direction,
         };
         if (selectedRecords.cameras) {
           updateRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, payload, 'cameras');
@@ -702,6 +710,8 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           max_allowed_wait_seconds: '120',
           cashier_count: '1',
           service_rate_per_cashier_per_minute: '12',
+          counting_line: [],
+          counting_line_direction: 'forward',
         });
       },
       deleteAction: () => deleteRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, 'cameras'),
@@ -971,6 +981,44 @@ export default function App() {
   }, [activeView]);
 
   useEffect(() => {
+    const interceptor = axios.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        const originalRequest = error.config;
+        if (
+          error.response?.status === 401 &&
+          !originalRequest._retry &&
+          auth.refresh &&
+          originalRequest.url &&
+          !originalRequest.url.includes('/api/token/')
+        ) {
+          originalRequest._retry = true;
+          try {
+            const refreshResponse = await axios.post(`${API_BASE_URL}/api/token/refresh/`, {
+              refresh: auth.refresh,
+            });
+            const nextAuth = {
+              token: refreshResponse.data.access,
+              refresh: refreshResponse.data.refresh || auth.refresh,
+            };
+            setAuth(nextAuth);
+            originalRequest.headers['Authorization'] = `Bearer ${refreshResponse.data.access}`;
+            return axios(originalRequest);
+          } catch (refreshError) {
+            console.error('Failed to refresh token in interceptor:', refreshError);
+            handleLogout();
+          }
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return () => {
+      axios.interceptors.response.eject(interceptor);
+    };
+  }, [auth]);
+
+  useEffect(() => {
     if (!auth.token || profile) return;
 
     const bootstrapProfile = async () => {
@@ -1004,13 +1052,13 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
+  function handleLogout() {
     setAuth({ token: '', refresh: '' });
     setProfile(null);
     setActiveView('operations');
     setCredentials({ username: '', password: '' });
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
-  };
+  }
 
   if (!auth.token || !profile) {
     if (screen === 'register') {

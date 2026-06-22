@@ -97,6 +97,8 @@ class Camera(models.Model):
     roi_polygon = models.JSONField(default=list, blank=True)
     queue_wait_threshold = models.FloatField(default=5.0)
     queue_roi_polygon = models.JSONField(default=list, blank=True)
+    counting_line = models.JSONField(default=list, blank=True)
+    counting_line_direction = models.CharField(max_length=20, default="forward", blank=True)
     queue_dwell_seconds = models.FloatField(default=2.0)
     queue_alert_people_threshold = models.PositiveIntegerField(default=3)
     queue_alert_duration_seconds = models.FloatField(default=5.0)

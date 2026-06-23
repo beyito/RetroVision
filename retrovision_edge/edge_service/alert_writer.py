@@ -153,7 +153,7 @@ class AlertWriter:
             height, width = frames[0].shape[:2]
             
             # Inicializar VideoWriter
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec
+            fourcc = cv2.VideoWriter_fourcc(*'avc1')  # MPEG-4 codec
             out = cv2.VideoWriter(
                 str(filepath),
                 fourcc,

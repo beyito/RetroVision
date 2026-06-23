@@ -6,16 +6,23 @@ Esta guía detalla el aprovisionamiento de infraestructura y el despliegue del s
 
 ## 1. Configuración de Base de Datos (Supabase)
 
-Para producción, utilizaremos el servicio administrado de **Supabase** conectado mediante su **Session Pooler** (puerto `6543`) en modo transacción.
+Para producción, utilizaremos el servicio administrado de **Supabase** conectado mediante su **Supabase Connection Pooler** (`*.pooler.supabase.com`). Esto es fundamental porque la conexión directa a la base de datos de Supabase es solo IPv6, mientras que las instancias EC2 tradicionales no suelen tener IPv6 configurado por defecto. El pooler sí soporta IPv4.
 
+Dependiendo de tu necesidad, puedes elegir uno de los siguientes puertos:
+- **Session Pooler (Puerto `5432`)** - *Recomendado*: Mantiene conexiones persistentes a nivel de sesión y es compatible con todas las características de Django (incluyendo cursores).
+- **Transaction Pooler (Puerto `6543`)**: Diseñado para picos masivos de tráfico, reutiliza conexiones a nivel de transacción (requiere obligatoriamente desactivar cursores en Django).
+
+Ambas opciones funcionan perfectamente con nuestra configuración en `settings.py` porque:
+1. Hemos forzado `"DISABLE_SERVER_SIDE_CURSORS": True` (obligatorio para el puerto `6543` y seguro/soportado para el puerto `5432`).
+2. Hemos configurado `"sslmode": "require"` para cifrar toda la transmisión.
+
+### Pasos para configurar:
 1. Regístrate o inicia sesión en [Supabase](https://supabase.com/).
 2. Crea un nuevo proyecto.
 3. Ve a **Project Settings > Database**.
-4. Copia la cadena de conexión de **Connection Pooling (Session)**. Debe tener un puerto `6543`.
-   - Ejemplo: `postgresql://postgres.[PROYECTO]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?sslmode=require`
-   
+4. Copia la cadena de conexión de **Connection Pooling** y selecciona **Session** (puerto `5432`) o **Transaction** (puerto `6543`).
+   - Ejemplo (Session Pooler): `postgresql://postgres.[PROYECTO]:[PASSWORD]@aws-1-[REGION].pooler.supabase.com:5432/postgres?sslmode=require`
 5. Esta cadena de conexión se establecerá en la variable de entorno `DATABASE_URL` del backend.
-   - *Nota*: Django ha sido configurado en `settings.py` para deshabilitar automáticamente los cursores del lado del servidor (`DISABLE_SERVER_SIDE_CURSORS: True`) y forzar SSL (`sslmode: require`) para garantizar compatibilidad con el pooler transaccional.
 
 ---
 
@@ -134,8 +141,10 @@ DJANGO_SECRET_KEY=un-secreto-muy-seguro-para-produccion
 DJANGO_DEBUG=False
 DJANGO_ALLOWED_HOSTS=midominio.com,IP_PUBLICA_EC2
 
-# Base de datos Supabase (Session Pooler)
-DATABASE_URL=postgresql://postgres.xxx:pass@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require
+# Base de datos Supabase (Session Pooler - Puerto 5432 o Transaction Pooler - Puerto 6543)
+# IMPORTANTE: Si tu contraseña contiene caracteres especiales (como #, @, :, /), debes codificarlos en formato URL.
+# Ejemplo: si tu contraseña es "#CObuchan898", debes escribir "%23CObuchan898".
+DATABASE_URL=postgresql://postgres.xxx:pass@aws-1-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 
 # Configuración de S3 de AWS
 AWS_STORAGE_BUCKET_NAME=retrovision-alerts-prod
@@ -201,3 +210,79 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker exec -it retrovision-web-prod python manage.py migrate
 ```
 Esto reconstruirá el frontend con Nginx, levantará el servidor Daphne (Django ASGI), reconectará a Supabase y mantendrá tu sistema en vivo con cero lag y total consistencia de datos.
+
+---
+
+## 8. Configuración de HTTPS / SSL (Let's Encrypt)
+
+Los navegadores modernos (como Chrome) bloquean o advierten sobre descargas de archivos `.zip` o ejecutables que se realicen a través de conexiones inseguras HTTP (`http://15.229.143.177/...`). 
+
+Para resolver esta advertencia y proteger todo el tráfico, debes habilitar **HTTPS** usando un dominio propio y un certificado gratuito de **Let's Encrypt (Certbot)**.
+
+### Paso A: Apuntar tu dominio al EC2
+1. Compra o configura un dominio (ej: `retrovision.tudominio.com`).
+2. En tu proveedor de DNS, añade un registro tipo **A** que apunte al **IP Público** de tu instancia EC2.
+
+### Paso B: Modificar puertos en Docker Compose
+Para que el Nginx del servidor host maneje el SSL (Terminación SSL), cambiaremos el puerto del contenedor frontend para que no choque con el puerto 80 del host.
+
+1. Abre tu `docker-compose.prod.yml`.
+2. Modifica la sección de `frontend` para cambiar los puertos mapeados a `8080:80`:
+```yaml
+  frontend:
+    ...
+    ports:
+      - "8080:80"
+```
+3. Reinicia la aplicación: `docker compose -f docker-compose.prod.yml up -d`
+
+### Paso C: Instalar Nginx y Certbot en el servidor host
+1. Instala Nginx en tu sistema operativo Ubuntu host:
+```bash
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
+
+2. Crea un archivo de configuración para tu sitio:
+```bash
+sudo nano /etc/nginx/sites-available/retrovision
+```
+
+3. Pega la siguiente configuración (reemplaza `retrovision.tudominio.com` por tu dominio real):
+```nginx
+server {
+    listen 80;
+    server_name retrovision.tudominio.com;
+
+    # Proxy para HTTP y WebSockets hacia Docker en el puerto 8080
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Soporte para WebSockets
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+4. Habilita el sitio y reinicia Nginx:
+```bash
+sudo ln -s /etc/nginx/sites-available/retrovision /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+### Paso D: Generar el Certificado SSL
+Ejecuta Certbot para obtener el certificado SSL e instalarlo automáticamente en Nginx:
+```bash
+sudo certbot --nginx -d retrovision.tudominio.com
+```
+*Sigue las instrucciones en pantalla, introduce tu correo y acepta los términos. Certbot configurará automáticamente la redirección obligatoria de HTTP a HTTPS.*
+
+¡Listo! A partir de ese momento, tu aplicación cargará bajo `https://retrovision.tudominio.com` y podrás descargar el agente ZIP sin ninguna advertencia del navegador.

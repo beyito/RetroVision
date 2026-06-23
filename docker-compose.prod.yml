@@ -68,7 +68,7 @@ services:
     container_name: retrovision-frontend-prod
     restart: always
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
       - web
     networks:

@@ -87,8 +87,9 @@ class Command(BaseCommand):
                     risk_score=float(payload["risk_score"]),
                     rules_triggered=self._parse_rules(payload.get("rules_triggered")),
                     video_path=payload.get("video_path") or None,
+                    zona=payload.get("zona") or "",
                 )
-                LOGGER.info("SecurityAlert saved id=%s camera_id=%s", alert.id, alert.camera_id)
+                LOGGER.info("SecurityAlert saved id=%s camera_id=%s zona=%s", alert.id, alert.camera_id, alert.zona)
                 
                 # Broadcast to channels group
                 from asgiref.sync import async_to_sync
@@ -107,6 +108,7 @@ class Command(BaseCommand):
                                 "risk_score": alert.risk_score,
                                 "rules_triggered": alert.rules_triggered,
                                 "video_path": alert.video_path,
+                                "zona": alert.zona,
                                 "created_at": alert.created_at.isoformat() if alert.created_at else None,
                             }
                         }
@@ -126,6 +128,7 @@ class Command(BaseCommand):
                 presion_cola_ratio = float(payload.get("presion_cola_ratio", 0.0))
                 alerta_cola_activa = bool(payload.get("alerta_cola_activa", False))
                 motivo_alerta_cola = str(payload.get("motivo_alerta_cola", ""))
+                sectores = payload.get("sectores", {})
                 
                 telemetry = Telemetria_Afluencia.objects.create(
                     timestamp=timestamp,
@@ -138,6 +141,7 @@ class Command(BaseCommand):
                     presion_cola_ratio=presion_cola_ratio,
                     alerta_cola_activa=alerta_cola_activa,
                     motivo_alerta_cola=motivo_alerta_cola,
+                    sectores=sectores,
                 )
                 LOGGER.info("Telemetria_Afluencia saved id=%s camera_id=%s", telemetry.id, telemetry.camera_id)
                 

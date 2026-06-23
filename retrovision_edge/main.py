@@ -132,8 +132,8 @@ class EdgeServiceRunner:
                 self.logger.info("Iniciando en MODO MULTI-CÁMARA ONLINE...")
                 
                 # Función que procesa los frames de una cámara en su propio hilo
-                def camera_thread_loop(pipeline, camera_id):
-                    self.logger.info("Hilo iniciado para cámara: %s", camera_id)
+                def camera_thread_loop(pipeline, camera_id, video_src):
+                    self.logger.info("Hilo iniciado para cámara: %s (origen: %s)", camera_id, video_src)
                     pipeline.start()
                     frame_count = 0
                     try:
@@ -142,7 +142,6 @@ class EdgeServiceRunner:
                             if not success or frame is None:
                                 time.sleep(0.03)  # Evitar saturación en caso de desconexión temporal
                                 continue
-                            
                             frame_count += 1
                             if frame_count % 300 == 0:
                                 self.logger.info("[%s] Frame %s procesado correctamente.", camera_id, metadata.frame_number)
@@ -167,6 +166,7 @@ class EdgeServiceRunner:
                     queue_roi_polygon = cam.get("queue_roi_polygon") or roi_polygon
                     counting_line = cam.get("counting_line") or []
                     counting_line_direction = cam.get("counting_line_direction") or "forward"
+                    custom_zones = cam.get("custom_zones") or []
                     
                     self.logger.info("Inicializando pipeline para %s (source: %s)...", cam_id, video_src)
                     pipeline = DetectionPipeline(
@@ -197,9 +197,10 @@ class EdgeServiceRunner:
                         camera_id=cam_id,
                         counting_line=counting_line,
                         counting_line_direction=counting_line_direction,
+                        custom_zones=custom_zones,
                     )
                     
-                    t = threading.Thread(target=camera_thread_loop, args=(pipeline, cam_id), daemon=True)
+                    t = threading.Thread(target=camera_thread_loop, args=(pipeline, cam_id, video_src), daemon=True)
                     t.start()
                     self.active_pipelines[cam_id] = {"pipeline": pipeline, "thread": t}
 
@@ -219,7 +220,24 @@ class EdgeServiceRunner:
 
                 # Esperar hasta que se detengan o el usuario presione 'q'
                 while any(p["pipeline"].is_running() for p in self.active_pipelines.values()):
-                    key = cv2.waitKey(1000) & 0xFF
+                    for cam_id, item in self.active_pipelines.items():
+                        pipeline = item["pipeline"]
+                        video_src = pipeline.video_source
+                        
+                        is_local_cam = (
+                            isinstance(video_src, int)
+                            or str(video_src).isdigit()
+                            or "local" in str(cam_id).lower()
+                            or "local" in str(video_src).lower()
+                            or "/dev/video" in str(video_src).lower()
+                        )
+                        
+                        if is_local_cam:
+                            annotated_frame = pipeline.get_latest_annotated_frame()
+                            if annotated_frame is not None:
+                                cv2.imshow(f"RetroVision Edge - {cam_id}", annotated_frame)
+                                
+                    key = cv2.waitKey(30) & 0xFF
                     if key == ord("q"):
                         self.logger.info("Cerrando multicámara...")
                         break
@@ -251,6 +269,9 @@ class EdgeServiceRunner:
                     service_rate_per_cashier_per_minute=self.config.mqtt.service_rate_per_cashier_per_minute,
                     mqtt_keep_alive=self.config.mqtt.keep_alive,
                     camera_id=self.config.mqtt.camera_id,
+                    counting_line=self.config.mqtt.counting_line,
+                    counting_line_direction=self.config.mqtt.counting_line_direction,
+                    custom_zones=self.config.mqtt.custom_zones,
                 )
 
                 self.pipeline.start()
@@ -326,6 +347,11 @@ class EdgeServiceRunner:
                 except Exception:
                     pass
             self.active_pipelines.clear()
+
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
 
         self.logger.info("=" * 70)
         self.logger.info("RetroVision Edge Service - DETENIDO")

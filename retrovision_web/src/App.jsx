@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import axios from 'axios';
 import {
   Activity,
@@ -326,6 +326,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
       service_rate_per_cashier_per_minute: '12',
       counting_line: [],
       counting_line_direction: 'forward',
+      custom_zones: [],
     },
   });
   const [selectedRecords, setSelectedRecords] = useState({
@@ -428,6 +429,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
         service_rate_per_cashier_per_minute: '12',
         counting_line: [],
         counting_line_direction: 'forward',
+        custom_zones: [],
       },
     };
     setForms((previous) => ({ ...previous, [section]: defaults[section] }));
@@ -498,6 +500,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           service_rate_per_cashier_per_minute: String(item.service_rate_per_cashier_per_minute ?? '12'),
           counting_line: item.counting_line || [],
           counting_line_direction: item.counting_line_direction || 'forward',
+          custom_zones: item.custom_zones || [],
         },
       }));
     }
@@ -691,6 +694,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           roi_polygon: forms.cameras.queue_roi_polygon,
           counting_line: forms.cameras.counting_line,
           counting_line_direction: forms.cameras.counting_line_direction,
+          custom_zones: forms.cameras.custom_zones,
         };
         if (selectedRecords.cameras) {
           updateRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, payload, 'cameras');
@@ -712,6 +716,7 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           service_rate_per_cashier_per_minute: '12',
           counting_line: [],
           counting_line_direction: 'forward',
+          custom_zones: [],
         });
       },
       deleteAction: () => deleteRecord(`/api/cameras/${selectedRecords.cameras.camera_id}/`, 'cameras'),
@@ -936,6 +941,19 @@ function EdgeOnboardingCard({ node }) {
     </div>
   );
 }
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
 
 
 export default function App() {
@@ -975,6 +993,10 @@ export default function App() {
     }
     window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
   }, [auth]);
+  const authRef = useRef(auth);
+  useEffect(() => {
+    authRef.current = auth;
+  }, [auth]);
 
   useEffect(() => {
     window.localStorage.setItem(VIEW_STORAGE_KEY, activeView);
@@ -985,26 +1007,61 @@ export default function App() {
       (response) => response,
       async (error) => {
         const originalRequest = error.config;
+        const currentAuth = authRef.current;
         if (
           error.response?.status === 401 &&
           !originalRequest._retry &&
-          auth.refresh &&
+          currentAuth?.refresh &&
           originalRequest.url &&
           !originalRequest.url.includes('/api/token/')
         ) {
+          if (isRefreshing) {
+            return new Promise((resolve, reject) => {
+              failedQueue.push({ resolve, reject });
+            })
+              .then((token) => {
+                if (originalRequest.headers) {
+                  if (typeof originalRequest.headers.set === 'function') {
+                    originalRequest.headers.set('Authorization', `Bearer ${token}`);
+                  } else {
+                    originalRequest.headers['Authorization'] = `Bearer ${token}`;
+                  }
+                }
+                originalRequest._retry = true;
+                return axios(originalRequest);
+              })
+              .catch((err) => {
+                return Promise.reject(err);
+              });
+          }
+
           originalRequest._retry = true;
+          isRefreshing = true;
+
           try {
             const refreshResponse = await axios.post(`${API_BASE_URL}/api/token/refresh/`, {
-              refresh: auth.refresh,
+              refresh: currentAuth.refresh,
             });
             const nextAuth = {
               token: refreshResponse.data.access,
-              refresh: refreshResponse.data.refresh || auth.refresh,
+              refresh: refreshResponse.data.refresh || currentAuth.refresh,
             };
             setAuth(nextAuth);
-            originalRequest.headers['Authorization'] = `Bearer ${refreshResponse.data.access}`;
+            window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextAuth));
+            processQueue(null, refreshResponse.data.access);
+            isRefreshing = false;
+
+            if (originalRequest.headers) {
+              if (typeof originalRequest.headers.set === 'function') {
+                originalRequest.headers.set('Authorization', `Bearer ${refreshResponse.data.access}`);
+              } else {
+                originalRequest.headers['Authorization'] = `Bearer ${refreshResponse.data.access}`;
+              }
+            }
             return axios(originalRequest);
           } catch (refreshError) {
+            processQueue(refreshError, null);
+            isRefreshing = false;
             console.error('Failed to refresh token in interceptor:', refreshError);
             handleLogout();
           }
@@ -1016,7 +1073,7 @@ export default function App() {
     return () => {
       axios.interceptors.response.eject(interceptor);
     };
-  }, [auth]);
+  }, []);
 
   useEffect(() => {
     if (!auth.token || profile) return;

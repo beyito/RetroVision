@@ -72,10 +72,11 @@ class DetectionPipeline:
         max_allowed_wait_seconds: float = 120.0,
         cashier_count: int = 1,
         service_rate_per_cashier_per_minute: float = 12.0,
-        mqtt_keep_alive: int = 60,
         camera_id: str = "camera-01",
         counting_line: Optional[list] = None,
         counting_line_direction: str = "forward",
+        custom_zones: Optional[list] = None,
+        mqtt_keep_alive: int = 60,
     ) -> None:
         """
         Inicializa el pipeline de detección.
@@ -91,9 +92,10 @@ class DetectionPipeline:
         self.camera_id = camera_id
         
         # Phase 5 properties
-        self.roi_polygon = roi_polygon or [[500, 350], [900, 350], [1100, 650], [400, 650]]
+        self.roi_polygon = roi_polygon or []
         self.queue_wait_threshold = queue_wait_threshold
-        self.queue_roi_polygon = queue_roi_polygon or self.roi_polygon
+        self.queue_roi_polygon = queue_roi_polygon or []
+        self.custom_zones = custom_zones or []
         self.queue_dwell_seconds = queue_dwell_seconds
         self.queue_alert_people_threshold = queue_alert_people_threshold
         self.queue_alert_duration_seconds = queue_alert_duration_seconds
@@ -128,8 +130,8 @@ class DetectionPipeline:
         # Heatmap float32 accumulator
         self.heatmap_accumulator = np.zeros((frame_height, frame_width), dtype=np.float32)
         # ROI numpy polygon
-        self.roi_poly_np = np.array(self.roi_polygon, dtype=np.int32).reshape((-1, 1, 2))
-        self.queue_roi_poly_np = np.array(self.queue_roi_polygon, dtype=np.int32).reshape((-1, 1, 2))
+        self.roi_poly_np = np.array(self.roi_polygon, dtype=np.int32).reshape((-1, 1, 2)) if self.roi_polygon else None
+        self.queue_roi_poly_np = np.array(self.queue_roi_polygon, dtype=np.int32).reshape((-1, 1, 2)) if self.queue_roi_polygon else None
         
         self._mqtt_config = {
             "enabled": mqtt_enabled,
@@ -155,6 +157,7 @@ class DetectionPipeline:
         self._latest_frame_jpeg: Optional[bytes] = None
         self._latest_raw_frame_jpeg: Optional[bytes] = None
         self._latest_raw_frame: Optional[np.ndarray] = None
+        self._latest_annotated_frame: Optional[np.ndarray] = None
         
         self._initialize_pipeline(model_name, confidence_threshold)
     
@@ -346,25 +349,55 @@ class DetectionPipeline:
             detected_track_ids = set()
             h_frame, w_frame = frame.shape[0], frame.shape[1]
 
+            # 1. Scale custom zones to actual frame resolution
+            scaled_custom_zones = []
+            for zone in self.custom_zones:
+                zone_name = zone.get("name", "Zona")
+                normalized_poly = zone.get("polygon", [])
+                if len(normalized_poly) >= 3:
+                    abs_poly = []
+                    for pt in normalized_poly:
+                        abs_poly.append([int(pt[0] * w_frame), int(pt[1] * h_frame)])
+                    abs_poly_np = np.array(abs_poly, dtype=np.int32).reshape((-1, 1, 2))
+                    scaled_custom_zones.append((zone_name, abs_poly_np))
+
+            # Draw custom zones
+            for zone_name, poly_np in scaled_custom_zones:
+                cv2.polylines(frame_to_display, [poly_np], isClosed=True, color=(255, 0, 255), thickness=2) # Purple
+                if len(poly_np) > 0:
+                    first_pt = poly_np[0][0]
+                    cv2.putText(
+                        frame_to_display,
+                        zone_name,
+                        (int(first_pt[0]), int(first_pt[1]) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 0, 255),
+                        2,
+                    )
+
             # Scale normalized counting line coordinates to actual frame resolution
             has_counting_line = len(self.counting_line) == 2
             if has_counting_line:
                 P1 = (int(self.counting_line[0][0] * w_frame), int(self.counting_line[0][1] * h_frame))
                 P2 = (int(self.counting_line[1][0] * w_frame), int(self.counting_line[1][1] * h_frame))
 
-            # Draw ROI Queue Area polygon
-            cv2.polylines(frame_to_display, [self.queue_roi_poly_np], isClosed=True, color=(0, 165, 255), thickness=2)
-            cv2.putText(
-                frame_to_display,
-                "ROI COLA",
-                (self.queue_roi_polygon[0][0], self.queue_roi_polygon[0][1] - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 165, 255),
-                2,
-            )
+            # Draw ROI Queue Area polygon if active
+            has_queue_roi = self.queue_roi_poly_np is not None and len(self.queue_roi_polygon) >= 3
+            if has_queue_roi:
+                cv2.polylines(frame_to_display, [self.queue_roi_poly_np], isClosed=True, color=(0, 165, 255), thickness=2)
+                cv2.putText(
+                    frame_to_display,
+                    "ROI COLA",
+                    (self.queue_roi_polygon[0][0], self.queue_roi_polygon[0][1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 165, 255),
+                    2,
+                )
 
-            # Process trajectories, ROI and heatmap coordinates
+            # Process trajectories, ROI, custom zones and heatmap coordinates
+            zone_counts = {z.get("name", "Zona"): 0 for z in self.custom_zones}
             for det in detection_result.detections:
                 # Solo procesamos métricas comerciales y flujo espacial para personas
                 if det.class_name.lower() not in ("person", "people"):
@@ -377,13 +410,18 @@ class DetectionPipeline:
                 # Accumulate visual heatmap matrix
                 cv2.circle(self.heatmap_accumulator, (int(cx), int(cy)), 25, 0.05, -1)
 
+                # Check custom zones occupancy
+                for zone_name, poly_np in scaled_custom_zones:
+                    if cv2.pointPolygonTest(poly_np, (float(cx), float(cy)), False) >= 0:
+                        zone_counts[zone_name] += 1
+
                 if det.track_id is not None:
                     tid = det.track_id
                     detected_track_ids.add(tid)
                     self.last_seen_time[tid] = current_time
                     self.last_seen_frame[tid] = self.frame_counter
 
-                    # 1. Update Trajectory trail history
+                    # Update Trajectory trail history
                     if tid not in self.trajectory_history:
                         self.trajectory_history[tid] = []
                     self.trajectory_history[tid].append((int(cx), int(cy)))
@@ -396,33 +434,34 @@ class DetectionPipeline:
                         for i in range(1, len(trail)):
                             cv2.line(frame_to_display, trail[i-1], trail[i], (255, 0, 0), 2)  # Blue line
 
-                    # 2. Check if inside ROI polygon
-                    inside = cv2.pointPolygonTest(self.queue_roi_poly_np, (float(cx), float(cy)), False) >= 0
-                    if inside:
-                        if tid not in self.queue_candidate_since:
-                            self.queue_candidate_since[tid] = current_time
-                        if tid not in self.roi_entry_times:
-                            self.roi_entry_times[tid] = self.queue_candidate_since[tid]
-                        
-                        elapsed = current_time - self.queue_candidate_since[tid]
-                        # Draw warning text on frame if waiting > threshold
-                        if elapsed >= self.queue_dwell_seconds:
-                            cv2.putText(
-                                frame_to_display,
-                                f"ID {tid} ESPERA: {elapsed:.1f}s",
-                                (det.x1, det.y1 - 25),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                (0, 0, 255),
-                                2,
-                            )
-                    else:
-                        if tid in self.queue_candidate_since:
-                            self.queue_candidate_since.pop(tid)
-                        if tid in self.roi_entry_times:
-                            self.roi_entry_times.pop(tid)
+                    # Check queue ROI if active
+                    if has_queue_roi:
+                        inside = cv2.pointPolygonTest(self.queue_roi_poly_np, (float(cx), float(cy)), False) >= 0
+                        if inside:
+                            if tid not in self.queue_candidate_since:
+                                self.queue_candidate_since[tid] = current_time
+                            if tid not in self.roi_entry_times:
+                                self.roi_entry_times[tid] = self.queue_candidate_since[tid]
+                            
+                            elapsed = current_time - self.queue_candidate_since[tid]
+                            # Draw warning text on frame if waiting > threshold
+                            if elapsed >= self.queue_dwell_seconds:
+                                cv2.putText(
+                                    frame_to_display,
+                                    f"ID {tid} ESPERA: {elapsed:.1f}s",
+                                    (det.x1, det.y1 - 25),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (0, 0, 255),
+                                    2,
+                                )
+                        else:
+                            if tid in self.queue_candidate_since:
+                                self.queue_candidate_since.pop(tid)
+                            if tid in self.roi_entry_times:
+                                self.roi_entry_times.pop(tid)
 
-                    # 3. Calculate Traffic Flow (Line Crossing or Default Fallback)
+                    # Calculate Traffic Flow (Line Crossing)
                     if has_counting_line:
                         # Determinant to check which side of directed segment P1->P2 centroid is on
                         side_val = (cx - P1[0]) * (P2[1] - P1[1]) - (cy - P1[1]) * (P2[0] - P1[0])
@@ -454,11 +493,6 @@ class DetectionPipeline:
                                                 self.personas_entrantes_count += 1
                                         self.last_cross_frame[tid] = self.frame_counter
                             self.track_sides[tid] = side
-                    else:
-                        # Fallback heuristic: Count when first seen
-                        if tid not in self.seen_track_ids:
-                            self.seen_track_ids.add(tid)
-                            self.personas_entrantes_count += 1
 
             # Clean up missing track IDs (lost longer than 5 seconds)
             for tid in list(self.last_seen_time.keys()):
@@ -470,9 +504,6 @@ class DetectionPipeline:
                         self.queue_candidate_since.pop(tid)
                     if tid in self.roi_entry_times:
                         self.roi_entry_times.pop(tid)
-                    if not has_counting_line:
-                        # Fallback heuristic: Count exit when lost
-                        self.personas_salientes_count += 1
 
             # Memory cleanup: purge obsolete track IDs from sides & cross states after 50 frames of invisibility
             for tid in list(self.last_seen_frame.keys()):
@@ -516,8 +547,8 @@ class DetectionPipeline:
                 heatmap_color = cv2.applyColorMap(heatmap_norm, cv2.COLORMAP_JET)
                 frame_to_display = cv2.addWeighted(frame_to_display, 0.7, heatmap_color, 0.3, 0)
 
-            # 4. Periodically publish commercial telemetry to MQTT every 3 seconds
-            if current_time - self.last_telemetry_publish_time >= 3.0:
+            # 4. Periodically publish commercial telemetry to MQTT every 1 second
+            if current_time - self.last_telemetry_publish_time >= 1.0:
                 # Calculate wait times inside ROI
                 roi_waits = []
                 for tid, entry_time in list(self.roi_entry_times.items()):
@@ -539,18 +570,19 @@ class DetectionPipeline:
                     else 0.0
                 )
                 alert_conditions = []
-                if personas_en_cola >= self.queue_alert_people_threshold:
-                    alert_conditions.append(
-                        f"cola>= {self.queue_alert_people_threshold} personas"
-                    )
-                if tiempo_espera_promedio >= self.max_allowed_wait_seconds:
-                    alert_conditions.append(
-                        f"espera_promedio>= {self.max_allowed_wait_seconds:.0f}s"
-                    )
-                if tiempo_espera_estimado >= self.max_allowed_wait_seconds:
-                    alert_conditions.append(
-                        f"espera_estimada>= {self.max_allowed_wait_seconds:.0f}s"
-                    )
+                if has_queue_roi:
+                    if personas_en_cola >= self.queue_alert_people_threshold:
+                        alert_conditions.append(
+                            f"cola>= {self.queue_alert_people_threshold} personas"
+                        )
+                    if tiempo_espera_promedio >= self.max_allowed_wait_seconds:
+                        alert_conditions.append(
+                            f"espera_promedio>= {self.max_allowed_wait_seconds:.0f}s"
+                        )
+                    if tiempo_espera_estimado >= self.max_allowed_wait_seconds:
+                        alert_conditions.append(
+                            f"espera_estimada>= {self.max_allowed_wait_seconds:.0f}s"
+                        )
 
                 if alert_conditions:
                     if self.queue_alert_started_at is None:
@@ -576,6 +608,7 @@ class DetectionPipeline:
                         alerta_cola_activa=alerta_cola_activa,
                         motivo_alerta_cola=motivo_alerta_cola,
                         heatmap_points=self.recent_heatmap_points,
+                        sectores=zone_counts,
                     )
                 
                 self.recent_heatmap_points = []
@@ -649,6 +682,19 @@ class DetectionPipeline:
                                         rules.extend(self._behavior_analyzer.analyze(det.landmarks).rules_triggered)
                             rules = list(set(rules))
                             
+                            # Find which zone the threat was in
+                            alert_zone = ""
+                            for det in detection_result.detections:
+                                if det.risk_score > 0.7:
+                                    cx, cy = det.center()
+                                    for zone_name, poly_np in scaled_custom_zones:
+                                        
+                                        if cv2.pointPolygonTest(poly_np, (float(cx), float(cy)), False) >= 0:
+                                            alert_zone = zone_name
+                                            break
+                                    if alert_zone:
+                                        break
+
                             video_path = self._alert_writer.write_alert_async(
                                 frames_to_save,
                                 risk_score=max_risk,
@@ -661,6 +707,7 @@ class DetectionPipeline:
                                     risk_score=max_risk,
                                     rules_triggered=rules,
                                     video_path=video_path,
+                                    zona=alert_zone,
                                 )
                     except Exception as e:
                         self.logger.error(f"Error disparando alerta: {e}")
@@ -738,6 +785,12 @@ class DetectionPipeline:
             return
         with self._latest_frame_lock:
             self._latest_frame_jpeg = encoded.tobytes()
+            self._latest_annotated_frame = frame.copy()
+
+    def get_latest_annotated_frame(self) -> Optional[np.ndarray]:
+        """Retorna el último frame anotado de forma segura y eficiente (numpy array)."""
+        with self._latest_frame_lock:
+            return self._latest_annotated_frame
 
     def _update_latest_raw_frame(self, frame: np.ndarray) -> None:
         success, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])

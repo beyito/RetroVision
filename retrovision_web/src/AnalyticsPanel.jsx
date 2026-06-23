@@ -56,8 +56,8 @@ export default function AnalyticsPanel({ token, selectedTenantId, selectedStoreI
 
   useEffect(() => {
     fetchData();
-    // Poll telemetry data every 3 seconds to match the edge publisher frequency
-    const interval = setInterval(fetchData, 3000);
+    // Poll telemetry data every 1 second to match the edge publisher frequency
+    const interval = setInterval(fetchData, 1000);
     return () => clearInterval(interval);
   }, [token, selectedTenantId, selectedStoreId, selectedCameraId]);
 
@@ -74,6 +74,24 @@ export default function AnalyticsPanel({ token, selectedTenantId, selectedStoreI
   // Current queue status
   const currentQueue = latest ? latest.personas_en_cola : 0;
   const queueAvgWait = latest ? latest.tiempo_espera_promedio.toFixed(1) : '0.0';
+
+  // Process sectors (zones)
+  const sectors = latest && typeof latest.sectores === 'object' && latest.sectores ? latest.sectores : {};
+  const sectorEntries = Object.entries(sectors);
+  
+  // Calculate total people in all sectors
+  const totalPeopleInSectors = sectorEntries.reduce((sum, [_, val]) => sum + (Number(val) || 0), 0);
+  
+  // Find busiest sector
+  let busiestSectorName = 'Ninguno';
+  let maxSectorPeople = 0;
+  sectorEntries.forEach(([name, count]) => {
+    const val = Number(count) || 0;
+    if (val > maxSectorPeople) {
+      maxSectorPeople = val;
+      busiestSectorName = name;
+    }
+  });
 
   // Format line chart data (chronological order)
   const chartData = [...telemetry].reverse().map(item => ({
@@ -289,57 +307,124 @@ export default function AnalyticsPanel({ token, selectedTenantId, selectedStoreI
         </div>
       </div>
 
-      {/* Spatial Density Heatmap Coordinates Panel */}
-      <div className="bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4">
-        <div className="flex items-center gap-2">
-          <MapPin className="w-4 h-4 text-cyan-400" />
-          <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Densidad Espacial de Tránsito (Heatmap Coordinates)</h4>
-        </div>
+      {/* Bottom Grid: Custom Sectors (Zonas) & Spatial Density Heatmap */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        <div className="relative aspect-[2.5/1] min-h-[200px] bg-black/60 border border-gray-800 rounded-xl overflow-hidden flex items-center justify-center">
-          <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-3">
-            <span className="bg-cyan-500/90 text-[#070b13] font-mono text-[8px] px-1.5 py-0.5 rounded font-black uppercase self-start">
-              VISTA EN PLANTA (CÁMARA ACCESO)
-            </span>
-            <span className="bg-black/75 text-[8px] font-mono text-gray-400 px-2 py-1 rounded border border-gray-800/60 self-end">
-              Muestra la concentración espacial de los últimos tránsitos
+        {/* Monitoreo de Sectores (Zonas) (6 cols) */}
+        <div className="lg:col-span-6 bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4 justify-between">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-purple-400" />
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Monitoreo de Sectores (Zonas)</h4>
+            </div>
+            <span className="px-2 py-0.5 rounded text-[9px] font-black border uppercase bg-purple-950/20 border-purple-500/30 text-purple-300">
+              {sectorEntries.length} Zonas Activas
             </span>
           </div>
 
-          {displayPoints.length === 0 ? (
-            <div className="text-gray-500 italic text-[11px] z-20">
-              Esperando coordenadas del seguidor espacial...
+          {/* Sectors List / Grid */}
+          <div className="flex-1 flex flex-col justify-center min-h-[180px]">
+            {sectorEntries.length === 0 ? (
+              <div className="text-gray-500 italic text-[11px] text-center p-4 border border-dashed border-gray-800 rounded-xl bg-[#070b13]">
+                No hay sectores de tránsito activos en esta cámara.
+                <p className="mt-1 text-[9px] text-gray-600">Dibuja zonas poligonales en la sección de Administración para medir la afluencia por área.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {sectorEntries.map(([name, val], idx) => {
+                  const count = Number(val) || 0;
+                  const borderColors = ['border-pink-500/40', 'border-purple-500/40', 'border-emerald-500/40', 'border-blue-500/40', 'border-amber-500/40'];
+                  const bgColors = ['bg-pink-500/5', 'bg-purple-500/5', 'bg-emerald-500/5', 'bg-blue-500/5', 'bg-amber-500/5'];
+                  const textColors = ['text-pink-400', 'text-purple-400', 'text-emerald-400', 'text-blue-400', 'text-amber-400'];
+                  const cIdx = idx % borderColors.length;
+
+                  return (
+                    <div 
+                      key={name}
+                      className={`flex flex-col justify-between p-3 rounded-xl border ${borderColors[cIdx]} ${bgColors[cIdx]}`}
+                    >
+                      <div>
+                        <span className="text-[9px] font-bold text-gray-500 uppercase">Sector</span>
+                        <h5 className="font-extrabold text-white text-xs truncate mt-0.5">{name}</h5>
+                      </div>
+                      <div className="mt-2 flex items-baseline gap-1">
+                        <span className={`text-xl font-black font-mono ${textColors[cIdx]}`}>{count}</span>
+                        <span className="text-[9px] text-gray-400 font-semibold uppercase">{count === 1 ? 'persona' : 'personas'}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Sector metrics info */}
+          <div className="bg-[#0a0f1d] border border-gray-800/80 rounded-xl p-3 flex flex-col gap-2 text-[11px] mt-2">
+            <div className="flex justify-between">
+              <span className="text-gray-400">Personas Totales en Sectores:</span>
+              <span className="font-bold text-white font-mono">{totalPeopleInSectors}</span>
             </div>
-          ) : (
-            <div className="w-full h-full p-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                  <CartesianGrid stroke="#1f2937/30" />
-                  <XAxis type="number" dataKey="x" domain={[0, 1280]} hide />
-                  <YAxis type="number" dataKey="y" domain={[0, 720]} hide reversed />
-                  <ZAxis type="number" dataKey="z" range={[8, 12]} />
-                  <Tooltip cursor={{ strokeDasharray: '3 3' }} hide />
-                  {/* Glowing scatter points representing heat zones */}
-                  <Scatter 
-                    name="Hotspots" 
-                    data={displayPoints} 
-                    fill="#3b82f6" 
-                    line={false} 
-                    shape={(props) => {
-                      const { cx, cy } = props;
-                      return (
-                        <g>
-                          <circle cx={cx} cy={cy} r={6} fill="#ef4444" fillOpacity={0.4} />
-                          <circle cx={cx} cy={cy} r={3} fill="#fbbf24" />
-                        </g>
-                      );
-                    }}
-                  />
-                </ScatterChart>
-              </ResponsiveContainer>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Sector más Concurrido:</span>
+              <span className="font-bold text-cyan-400 font-mono">
+                {busiestSectorName} {maxSectorPeople > 0 ? `(${maxSectorPeople} pers.)` : ''}
+              </span>
             </div>
-          )}
+          </div>
         </div>
+
+        {/* Spatial Density Heatmap Coordinates Panel (6 cols) */}
+        <div className="lg:col-span-6 bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-cyan-400" />
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Densidad Espacial de Tránsito</h4>
+          </div>
+          
+          <div className="relative aspect-[1.8/1] min-h-[220px] bg-black/60 border border-gray-800 rounded-xl overflow-hidden flex items-center justify-center">
+            <div className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-3">
+              <span className="bg-cyan-500/90 text-[#070b13] font-mono text-[8px] px-1.5 py-0.5 rounded font-black uppercase self-start">
+                VISTA EN PLANTA
+              </span>
+              <span className="bg-black/75 text-[8px] font-mono text-gray-400 px-2 py-1 rounded border border-gray-800/60 self-end">
+                Concentración espacial de tránsitos
+              </span>
+            </div>
+
+            {displayPoints.length === 0 ? (
+              <div className="text-gray-500 italic text-[11px] z-20">
+                Esperando coordenadas del seguidor espacial...
+              </div>
+            ) : (
+              <div className="w-full h-full p-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                    <CartesianGrid stroke="#1f2937/30" />
+                    <XAxis type="number" dataKey="x" domain={[0, 1280]} hide />
+                    <YAxis type="number" dataKey="y" domain={[0, 720]} hide reversed />
+                    <ZAxis type="number" dataKey="z" range={[8, 12]} />
+                    <Tooltip cursor={{ strokeDasharray: '3 3' }} hide />
+                    <Scatter 
+                      name="Hotspots" 
+                      data={displayPoints} 
+                      fill="#3b82f6" 
+                      line={false} 
+                      shape={(props) => {
+                        const { cx, cy } = props;
+                        return (
+                          <g>
+                            <circle cx={cx} cy={cy} r={6} fill="#ef4444" fillOpacity={0.4} />
+                            <circle cx={cx} cy={cy} r={3} fill="#fbbf24" />
+                          </g>
+                        );
+                      }}
+                    />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
 
     </div>

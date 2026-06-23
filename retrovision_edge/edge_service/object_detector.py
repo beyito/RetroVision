@@ -230,6 +230,7 @@ class ObjectDetector:
                 conf=conf_val,
                 verbose=False,  # No imprimir en console
                 device=self.device,
+                imgsz=640,
             )
             
             inference_time = (time.perf_counter() - start_time) * 1000  # ms

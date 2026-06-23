@@ -503,6 +503,11 @@ export default function Dashboard({ token, profile }) {
                               <Camera className="w-3 h-3 text-indigo-400" />
                               {alert.camera_display_name || alert.camera_id}
                             </span>
+                            {alert.zona && (
+                              <span className="flex items-center gap-1 text-purple-200 bg-purple-900/30 border border-purple-500/30 px-2 py-0.5 rounded font-mono font-bold animate-pulse">
+                                📍 {alert.zona}
+                              </span>
+                            )}
                             {alert.tenant_name && (
                               <span className="text-gray-400 font-mono">{alert.tenant_name}</span>
                             )}
@@ -546,6 +551,9 @@ export default function Dashboard({ token, profile }) {
                   <div className="flex justify-between items-center pb-2 border-b border-gray-800/80">
                     <div>
                       <h4 className="font-extrabold text-white text-xs font-mono">CAMARA: {selectedAlert.camera_display_name || selectedAlert.camera_id}</h4>
+                      {selectedAlert.zona && (
+                        <p className="text-[10px] text-purple-300 font-bold mt-1 font-mono">📍 ZONA: {selectedAlert.zona}</p>
+                      )}
                       <p className="text-[9px] text-gray-400 mt-0.5 font-mono">Alert ID: #{selectedAlert.id}</p>
                     </div>
                     <div className="px-2 py-0.5 rounded text-[10px] font-black font-mono bg-red-950/60 border border-red-500/30 text-red-500">

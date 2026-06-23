@@ -370,7 +370,7 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         queryset = Telemetria_Afluencia.objects.all().order_by('-timestamp')
-        return _apply_context_filters(self.request, queryset)
+        return _apply_context_filters(self.request, queryset)[:100]
 
 class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows visual heatmaps to be viewed."""
@@ -380,4 +380,4 @@ class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         queryset = Heatmaps.objects.all().order_by('-timestamp')
-        return _apply_context_filters(self.request, queryset)
+        return _apply_context_filters(self.request, queryset)[:50]

@@ -99,6 +99,7 @@ class Camera(models.Model):
     queue_roi_polygon = models.JSONField(default=list, blank=True)
     counting_line = models.JSONField(default=list, blank=True)
     counting_line_direction = models.CharField(max_length=20, default="forward", blank=True)
+    custom_zones = models.JSONField(default=list, blank=True)
     queue_dwell_seconds = models.FloatField(default=2.0)
     queue_alert_people_threshold = models.PositiveIntegerField(default=3)
     queue_alert_duration_seconds = models.FloatField(default=5.0)
@@ -135,6 +136,7 @@ class SecurityAlert(models.Model):
     risk_score = models.FloatField()
     rules_triggered = models.JSONField(default=list, blank=True)
     video_path = models.CharField(max_length=512, blank=True, null=True)
+    zona = models.CharField(max_length=128, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -163,6 +165,7 @@ class Telemetria_Afluencia(models.Model):
     presion_cola_ratio = models.FloatField(default=0.0)
     alerta_cola_activa = models.BooleanField(default=False)
     motivo_alerta_cola = models.CharField(max_length=255, blank=True, default="")
+    sectores = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

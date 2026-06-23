@@ -53,6 +53,9 @@ class MQTTConfig:
     service_rate_per_cashier_per_minute: float = 12.0
     keep_alive: int = 60
     enabled: bool = True
+    counting_line: list = None
+    counting_line_direction: str = "forward"
+    custom_zones: list = None
 
 
 @dataclass
@@ -129,17 +132,29 @@ class EdgeServiceConfig:
         )
 
         # Parse polygon ROI
-        roi_env = os.getenv('ROI_POLYGON', '[[500, 350], [900, 350], [1100, 650], [400, 650]]')
+        roi_env = os.getenv('ROI_POLYGON', '[]')
         try:
             roi_poly = json.loads(roi_env)
         except Exception:
-            roi_poly = [[500, 350], [900, 350], [1100, 650], [400, 650]]
+            roi_poly = []
 
-        queue_roi_env = os.getenv('QUEUE_ROI_POLYGON', roi_env)
+        queue_roi_env = os.getenv('QUEUE_ROI_POLYGON', '[]')
         try:
             queue_roi_poly = json.loads(queue_roi_env)
         except Exception:
-            queue_roi_poly = roi_poly
+            queue_roi_poly = []
+
+        counting_line_env = os.getenv('COUNTING_LINE', '[]')
+        try:
+            counting_line_poly = json.loads(counting_line_env)
+        except Exception:
+            counting_line_poly = []
+
+        custom_zones_env = os.getenv('CUSTOM_ZONES', '[]')
+        try:
+            custom_zones_poly = json.loads(custom_zones_env)
+        except Exception:
+            custom_zones_poly = []
 
         self.mqtt = MQTTConfig(
             broker_host=os.getenv('MQTT_BROKER_HOST', 'localhost'),
@@ -159,6 +174,9 @@ class EdgeServiceConfig:
             service_rate_per_cashier_per_minute=float(os.getenv('SERVICE_RATE_PER_CASHIER_PER_MINUTE', 12.0)),
             keep_alive=int(os.getenv('MQTT_KEEP_ALIVE', 60)),
             enabled=os.getenv('MQTT_ENABLED', 'true').lower() == 'true',
+            counting_line=counting_line_poly,
+            counting_line_direction=os.getenv('COUNTING_LINE_DIRECTION', 'forward'),
+            custom_zones=custom_zones_poly,
         )
 
         self.logging = LoggingConfig(
@@ -236,6 +254,15 @@ class EdgeServiceConfig:
             remote_service_rate = remote_profile.get("service_rate_per_cashier_per_minute")
             if remote_service_rate is not None:
                 self.mqtt.service_rate_per_cashier_per_minute = float(remote_service_rate)
+            remote_line = remote_profile.get("counting_line")
+            if isinstance(remote_line, list) and remote_line:
+                self.mqtt.counting_line = remote_line
+            remote_direction = remote_profile.get("counting_line_direction")
+            if remote_direction:
+                self.mqtt.counting_line_direction = remote_direction
+            remote_zones = remote_profile.get("custom_zones")
+            if isinstance(remote_zones, list) and remote_zones:
+                self.mqtt.custom_zones = remote_zones
         except Exception:
             # El edge debe seguir funcionando aunque el backend no responda.
             return

@@ -99,6 +99,7 @@ class AlertPublisher:
         rules_triggered: Sequence[str],
         video_path: Optional[Path | str] = None,
         timestamp: Optional[datetime] = None,
+        zona: Optional[str] = "",
     ) -> bool:
         """Publish a security alert event.
 
@@ -108,6 +109,7 @@ class AlertPublisher:
             rules_triggered: Names of triggered rules.
             video_path: Optional local path or URI for the alert clip.
             timestamp: Event timestamp. Defaults to current UTC time.
+            zona: Optional name of the custom zone (ROI) where the alert occurred.
 
         Returns:
             True if the publish call was accepted by the MQTT client.
@@ -122,6 +124,7 @@ class AlertPublisher:
             "risk_score": round(float(risk_score), 4),
             "rules_triggered": list(rules_triggered),
             "video_path": str(video_path) if video_path else None,
+            "zona": zona,
         }
 
         try:
@@ -154,6 +157,7 @@ class AlertPublisher:
         alerta_cola_activa: bool,
         motivo_alerta_cola: str,
         heatmap_points: list[list[int]],
+        sectores: Optional[dict] = None,
         timestamp: Optional[datetime] = None,
     ) -> bool:
         """Publish a commercial telemetry and heatmap event.
@@ -177,6 +181,7 @@ class AlertPublisher:
             "alerta_cola_activa": bool(alerta_cola_activa),
             "motivo_alerta_cola": str(motivo_alerta_cola or ""),
             "heatmap_points": list(heatmap_points),
+            "sectores": sectores or {},
         }
 
         try:

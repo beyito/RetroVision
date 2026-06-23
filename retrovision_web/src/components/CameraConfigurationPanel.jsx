@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 
 import QueueRoiEditor from './QueueRoiEditor';
 import CountingLineEditor from './CountingLineEditor';
+import CustomZonesEditor from './CustomZonesEditor';
 
 
 function InputField({ field, value, onChange }) {
@@ -118,7 +119,7 @@ export default function CameraConfigurationPanel({
           )}
         </div>
 
-        <div className="mt-5 flex gap-3">
+        <div className="mt-5 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => setActiveTab('general')}
@@ -139,6 +140,13 @@ export default function CameraConfigurationPanel({
             className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-[0.16em] ${activeTab === 'counting_line' ? 'bg-amber-500 text-slate-950' : 'bg-white/5 text-white'}`}
           >
             Línea de Conteo
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('custom_zones')}
+            className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-[0.16em] ${activeTab === 'custom_zones' ? 'bg-purple-500 text-slate-950' : 'bg-white/5 text-white'}`}
+          >
+            Zonas (ROIs)
           </button>
         </div>
 
@@ -187,6 +195,19 @@ export default function CameraConfigurationPanel({
                 direction={formState.counting_line_direction ?? 'forward'}
                 onChange={(nextPoints) => onChange('counting_line', nextPoints)}
                 onDirectionChange={(nextDir) => onChange('counting_line_direction', nextDir)}
+                snapshotUrl={snapshotUrl}
+              />
+            </div>
+          )}
+
+          {activeTab === 'custom_zones' && (
+            <div>
+              <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Zonas Personalizadas (Sectores)
+              </label>
+              <CustomZonesEditor
+                value={formState.custom_zones ?? []}
+                onChange={(nextZones) => onChange('custom_zones', nextZones)}
                 snapshotUrl={snapshotUrl}
               />
             </div>

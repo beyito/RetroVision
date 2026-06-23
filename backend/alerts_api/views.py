@@ -597,6 +597,33 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
             
         total_records = len(record_list)
         if total_records == 0:
+            # Query security alerts even if there's no commercial telemetry
+            base_alerts_queryset = SecurityAlert.objects.filter(timestamp__gte=start_date).order_by('timestamp')
+            alerts_queryset = _apply_context_filters(request, base_alerts_queryset)
+            total_alerts = alerts_queryset.count()
+            rule_counts = defaultdict(int)
+            alerts_by_day_name = defaultdict(int)
+            for alert in alerts_queryset:
+                rules = alert.rules_triggered
+                if isinstance(rules, list):
+                    for r in rules:
+                        normalized_rule = str(r).strip()
+                        if normalized_rule:
+                            rule_counts[normalized_rule] += 1
+                elif isinstance(rules, str):
+                    normalized_rule = str(rules).strip()
+                    if normalized_rule:
+                        rule_counts[normalized_rule] += 1
+                day_name = alert.timestamp.strftime("%A")
+                alerts_by_day_name[day_name] += 1
+            day_order = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+            day_mapping = {
+                "Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
+                "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo"
+            }
+            alerts_by_day = [{"day": esp_name, "alerts": alerts_by_day_name.get(eng_name, 0)} for eng_name, esp_name in day_mapping.items()]
+            alerts_by_day.sort(key=lambda x: day_order.index(x["day"]) if x["day"] in day_order else 9)
+
             resp_data = {
                 "total_records_analyzed": 0,
                 "total_visitors_estimated": 0,
@@ -611,7 +638,12 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
                 },
                 "sectors_metrics": {},
                 "hourly_inflow": [],
-                "daily_inflow": []
+                "daily_inflow": [],
+                "security_metrics": {
+                    "total_alerts": total_alerts,
+                    "rule_breakdown": dict(rule_counts),
+                    "alerts_by_day": alerts_by_day
+                }
             }
             cache.set(cache_key, resp_data, timeout=300)
             return Response(resp_data)
@@ -729,6 +761,28 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
                 highest_avg = s_data["avg_occupancy"]
                 busiest_sector = s_name
         
+        # 5. Security alerts aggregation
+        base_alerts_queryset = SecurityAlert.objects.filter(timestamp__gte=start_date).order_by('timestamp')
+        alerts_queryset = _apply_context_filters(request, base_alerts_queryset)
+        total_alerts = alerts_queryset.count()
+        rule_counts = defaultdict(int)
+        alerts_by_day_name = defaultdict(int)
+        for alert in alerts_queryset:
+            rules = alert.rules_triggered
+            if isinstance(rules, list):
+                for r in rules:
+                    normalized_rule = str(r).strip()
+                    if normalized_rule:
+                        rule_counts[normalized_rule] += 1
+            elif isinstance(rules, str):
+                normalized_rule = str(rules).strip()
+                if normalized_rule:
+                    rule_counts[normalized_rule] += 1
+            day_name = alert.timestamp.strftime("%A")
+            alerts_by_day_name[day_name] += 1
+        alerts_by_day = [{"day": esp_name, "alerts": alerts_by_day_name.get(eng_name, 0)} for eng_name, esp_name in day_mapping.items()]
+        alerts_by_day.sort(key=lambda x: day_order.index(x["day"]) if x["day"] in day_order else 9)
+
         resp_data = {
             "total_records_analyzed": total_records,
             "total_visitors_estimated": total_visitors_estimated,
@@ -743,7 +797,12 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
             },
             "sectors_metrics": sectors_metrics,
             "hourly_inflow": hourly_inflow,
-            "daily_inflow": daily_inflow
+            "daily_inflow": daily_inflow,
+            "security_metrics": {
+                "total_alerts": total_alerts,
+                "rule_breakdown": dict(rule_counts),
+                "alerts_by_day": alerts_by_day
+            }
         }
         cache.set(cache_key, resp_data, timeout=300)  # Cache for 5 minutes
         return Response(resp_data)

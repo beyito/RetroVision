@@ -87,12 +87,21 @@ export default function ReportsPanel({ token, selectedTenantId, selectedStoreId,
   const hourlyData = data?.hourly_inflow ?? [];
   const dailyData = data?.daily_inflow ?? [];
 
-  // Pie chart data for queue saturation
   const queuePieData = [
     { name: 'Saturado', value: Math.round(queue.saturation_percentage) },
     { name: 'Despejado', value: Math.max(0, 100 - Math.round(queue.saturation_percentage)) }
   ];
   const COLORS = ['#ef4444', '#10b981']; // Red vs Green
+
+  // Security metrics formatting
+  const securityAlertsCount = data?.security_metrics?.total_alerts ?? 0;
+  const securityDailyData = data?.security_metrics?.alerts_by_day ?? [];
+  const securityRuleData = data?.security_metrics?.rule_breakdown
+    ? Object.entries(data.security_metrics.rule_breakdown).map(([name, count]) => ({
+        name,
+        value: count
+      })).sort((a, b) => b.value - a.value)
+    : [];
 
   return (
     <div className="flex flex-col gap-6 animate-fade-in">
@@ -150,7 +159,7 @@ export default function ReportsPanel({ token, selectedTenantId, selectedStoreId,
       )}
 
       {/* KPI Dashboard Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
         {/* Visitor estimate */}
         <div className="bg-[#0f1524]/60 border border-gray-800 rounded-xl p-4 relative overflow-hidden flex items-center justify-between">
           <div className="absolute top-0 left-0 w-1.5 h-full bg-cyan-500" />
@@ -174,6 +183,19 @@ export default function ReportsPanel({ token, selectedTenantId, selectedStoreId,
           </div>
           <div className="p-3 bg-amber-950/20 border border-amber-500/20 rounded-lg text-amber-400">
             <Clock className="w-6 h-6" />
+          </div>
+        </div>
+
+        {/* Security alerts (NEW) */}
+        <div className="bg-[#0f1524]/60 border border-gray-800 rounded-xl p-4 relative overflow-hidden flex items-center justify-between">
+          <div className="absolute top-0 left-0 w-1.5 h-full bg-red-500" />
+          <div>
+            <p className="text-[10px] font-bold text-red-400 uppercase tracking-wider">Alertas Emitidas</p>
+            <h3 className="text-2xl font-black text-white mt-1 font-mono">{securityAlertsCount}</h3>
+            <span className="text-[9px] text-gray-500">Total anomalías detectadas</span>
+          </div>
+          <div className="p-3 bg-red-950/20 border border-red-500/20 rounded-lg text-red-400">
+            <AlertTriangle className="w-6 h-6" />
           </div>
         </div>
 
@@ -364,6 +386,69 @@ export default function ReportsPanel({ token, selectedTenantId, selectedStoreId,
                     labelStyle={{ color: '#9ca3af', fontWeight: 'bold' }}
                   />
                   <Bar dataKey="inflow" name="Ingresos totales" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      {/* Security Alerts Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Weekly Alerts Distribution (7 columns) */}
+        <div className="lg:col-span-7 bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-400" />
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Distribución Semanal de Alertas</h4>
+          </div>
+          
+          <div className="h-[240px] w-full text-[10px]">
+            {securityDailyData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-gray-500 italic">
+                Sin alertas registradas en este período.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={securityDailyData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937/40" vertical={false} />
+                  <XAxis dataKey="day" stroke="#6b7280" />
+                  <YAxis stroke="#6b7280" />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#0a0f1d', border: '1px solid #374151', borderRadius: '8px' }}
+                    labelStyle={{ color: '#9ca3af', fontWeight: 'bold' }}
+                  />
+                  <Bar dataKey="alerts" name="Total Alertas" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Alerts Breakdown by Rule (5 columns) */}
+        <div className="lg:col-span-5 bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-red-400" />
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Anomalías por Regla Disparada</h4>
+          </div>
+
+          <div className="h-[240px] w-full text-[10px]">
+            {securityRuleData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-gray-500 italic">
+                Sin anomalías de seguridad registradas.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={securityRuleData} layout="vertical" margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937/40" horizontal={false} />
+                  <XAxis type="number" stroke="#6b7280" />
+                  <YAxis dataKey="name" type="category" stroke="#6b7280" width={110} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#0a0f1d', border: '1px solid #374151', borderRadius: '8px' }}
+                    labelStyle={{ color: '#9ca3af', fontWeight: 'bold' }}
+                  />
+                  <Bar dataKey="value" name="Cantidad" fill="#f87171" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}

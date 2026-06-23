@@ -39,8 +39,8 @@ class BehaviorAnalyzer:
     """
     
     # Umbrales de distancia (normalizados respecto a altura del torso)
-    HIDDEN_HANDS_DISTANCE_THRESHOLD = 0.45  # Si la mano está a menos del 45% del tamaño del torso
-    ABNORMAL_POSTURE_THRESHOLD = 0.50  # Si la nariz sale del eje más de un 50%
+    HIDDEN_HANDS_DISTANCE_THRESHOLD = 0.25  # Más estricto para evitar falsos positivos con manos normales
+    ABNORMAL_POSTURE_THRESHOLD = 0.65  # Más tolerancia para inclinación lateral
     
     def __init__(self):
         """Inicializa el analizador de comportamiento."""
@@ -139,7 +139,7 @@ class BehaviorAnalyzer:
             vertical_distance = abs(shoulder_center_y - nose[1])
             normalized_vertical = vertical_distance / torso_height
             
-            if normalized_deviation > self.ABNORMAL_POSTURE_THRESHOLD or normalized_vertical < 0.2:
+            if normalized_deviation > self.ABNORMAL_POSTURE_THRESHOLD or normalized_vertical < 0.08:
                 return 0.85 # Dispara la alarma (> 0.7)
             
             return 0.0

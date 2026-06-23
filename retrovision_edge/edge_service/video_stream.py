@@ -95,6 +95,12 @@ class VideoStreamProcessor:
         self._last_frame_time: Optional[float] = None
         self._lock = threading.Lock()
         
+        # Variables para captura en hilo de fondo (evita acumulación de lag)
+        self._latest_frame: Optional[np.ndarray] = None
+        self._latest_success = False
+        self._capture_thread: Optional[threading.Thread] = None
+        self._thread_lock = threading.Lock()
+        
         self._initialize_camera()
 
     @staticmethod
@@ -185,7 +191,7 @@ class VideoStreamProcessor:
             ".m4v",
         }
     
-    def read_frame(self) -> Tuple[bool, Optional[bytes], Optional[FrameMetadata]]:
+    def read_frame(self) -> Tuple[bool, Optional[np.ndarray], Optional[FrameMetadata]]:
         """
         Lee el siguiente frame del flujo de video.
         
@@ -202,8 +208,20 @@ class VideoStreamProcessor:
             raise CameraAccessError("La fuente de video no está inicializada")
         
         try:
-            with self._lock:
-                success, frame = self._capture.read()
+            if self._is_video_file_source():
+                with self._lock:
+                    success, frame = self._capture.read()
+            else:
+                with self._thread_lock:
+                    success = self._latest_success
+                    frame = self._latest_frame
+                
+                # Pequeña espera en el primer frame si el hilo de fondo aún no ha arrancado
+                if (not success or frame is None) and self._is_running:
+                    time.sleep(0.05)
+                    with self._thread_lock:
+                        success = self._latest_success
+                        frame = self._latest_frame
             
             if not success or frame is None:
                 self.logger.warning("No se pudo leer frame de la fuente de video")
@@ -280,7 +298,41 @@ class VideoStreamProcessor:
         """Inicia el procesamiento de video."""
         with self._lock:
             self._is_running = True
+        
+        # Iniciar hilo de captura en tiempo real si no es un archivo local
+        if not self._is_video_file_source():
+            with self._thread_lock:
+                self._latest_frame = None
+                self._latest_success = False
+            self._capture_thread = threading.Thread(target=self._capture_worker, daemon=True)
+            self._capture_thread.start()
+            self.logger.info("Hilo de captura en tiempo real iniciado para vaciado de buffer")
+            
         self.logger.info("Procesamiento de video iniciado")
+    
+    def _capture_worker(self) -> None:
+        """Hilo de fondo que lee continuamente de VideoCapture para vaciar el buffer de OpenCV."""
+        self.logger.info("Iniciando bucle de captura en tiempo real (background)...")
+        while True:
+            with self._lock:
+                if not self._is_running:
+                    break
+            
+            try:
+                if self._capture and self._capture.isOpened():
+                    success, frame = self._capture.read()
+                    if success and frame is not None:
+                        with self._thread_lock:
+                            self._latest_frame = frame
+                            self._latest_success = True
+                    else:
+                        time.sleep(0.005)
+                else:
+                    time.sleep(0.1)
+            except Exception as e:
+                self.logger.warning(f"Error en hilo de lectura de cámara: {e}")
+                time.sleep(0.1)
+        self.logger.info("Hilo de captura en tiempo real finalizado.")
     
     def stop(self) -> None:
         """Detiene el procesamiento de video."""
@@ -318,7 +370,12 @@ class VideoStreamProcessor:
         try:
             with self._lock:
                 self._is_running = False
+            
+            if self._capture_thread and self._capture_thread.is_alive():
+                self._capture_thread.join(timeout=2.0)
+                self._capture_thread = None
                 
+            with self._lock:
                 if self._capture is not None:
                     self._capture.release()
                     self._capture = None

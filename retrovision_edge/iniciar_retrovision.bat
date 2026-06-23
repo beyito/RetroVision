@@ -6,8 +6,8 @@ echo ===================================================
 echo.
 
 :: CONFIGURACIÓN CENTRAL DEL SAAS (Modifica esto antes de empaquetar el ZIP para producción)
-set SAAS_BACKEND_URL=http://localhost:8000
-set SAAS_MQTT_HOST=localhost
+set SAAS_BACKEND_URL=https://retrovis.duckdns.org
+set SAAS_MQTT_HOST=retrovis.duckdns.org
 
 :: 1. Verificar si Python está instalado
 python --version >nul 2>&1

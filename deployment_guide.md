@@ -286,3 +286,47 @@ sudo certbot --nginx -d retrovision.tudominio.com
 *Sigue las instrucciones en pantalla, introduce tu correo y acepta los términos. Certbot configurará automáticamente la redirección obligatoria de HTTP a HTTPS.*
 
 ¡Listo! A partir de ese momento, tu aplicación cargará bajo `https://retrovision.tudominio.com` y podrás descargar el agente ZIP sin ninguna advertencia del navegador.
+
+---
+
+## 9. Configuración y Empaquetado del Agente Edge (Tiendas)
+
+El agente que corre en las tiendas (`retrovision_edge`) requiere conectarse a tu backend y al broker MQTT instalados en el EC2 de producción.
+
+Para evitar que tus clientes tengan que configurar manualmente las direcciones IP del servidor, debes empaquetar el agente con la configuración correcta de producción antes de subirlo a Git/EC2.
+
+### Paso A: Modificar los scripts de inicio en el código fuente
+Abre los siguientes archivos en tu entorno de desarrollo local:
+1. **[`retrovision_edge/iniciar_retrovision.sh`](file:///c:/SW1_PROYECTO/retrovision_edge/iniciar_retrovision.sh)** (Líneas 9 y 10)
+2. **[`retrovision_edge/iniciar_retrovision.bat`](file:///c:/SW1_PROYECTO/retrovision_edge/iniciar_retrovision.bat)** (Líneas 9 y 10)
+
+Reemplaza los valores por defecto (`localhost`) por la IP pública de tu EC2 o tu dominio de producción:
+
+```bash
+# Ejemplo usando IP Pública (si no tienes dominio aún)
+SAAS_BACKEND_URL="http://15.229.143.177:8000"  # O http://15.229.143.177 si usas el proxy de Nginx
+SAAS_MQTT_HOST="15.229.143.177"
+
+# Ejemplo usando tu dominio HTTPS (Una vez completado el Paso 8)
+SAAS_BACKEND_URL="https://retrovision.tudominio.com"
+SAAS_MQTT_HOST="retrovision.tudominio.com"
+```
+
+### Paso B: Regenerar el archivo ZIP
+Una vez modificados los scripts con las credenciales de producción, corre el script de empaquetado en tu terminal:
+```bash
+python zip_edge_agent.py
+```
+Esto creará el archivo comprimido actualizado en `retrovision_web/public/retrovision_edge.zip`.
+
+### Paso C: Subir los cambios a producción
+Realiza el commit y empuja los cambios para que se actualicen en el EC2:
+```bash
+git add retrovision_edge/iniciar_retrovision.sh retrovision_edge/iniciar_retrovision.bat retrovision_web/public/retrovision_edge.zip
+git commit -m "configurar edge agent para produccion"
+git push
+```
+Al hacer `git pull` y reconstruir el frontend en tu EC2, cualquier cliente que descargue el agente desde tu panel web tendrá la configuración lista para conectarse automáticamente a producción.
+
+> [!NOTE]
+> **Modificación manual alternativa**: Si un cliente ya descargó el agente y tiene problemas para conectar, simplemente debe abrir el archivo `.env` que se genera en la carpeta del agente de su computadora y cambiar manualmente las variables `BACKEND_API_BASE_URL` y `MQTT_BROKER_HOST` por la dirección IP o dominio de tu servidor EC2.

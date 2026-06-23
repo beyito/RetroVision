@@ -91,6 +91,7 @@ class AlertWriter:
         frames: List[np.ndarray],
         risk_score: float,
         triggered_rules: Optional[List[str]] = None,
+        zona: str = "",
     ) -> Optional[Path]:
         """
         Exporta frames a un archivo .mp4 de forma asíncrona.
@@ -102,6 +103,7 @@ class AlertWriter:
             frames: Lista de frames a guardar
             risk_score: Score de riesgo que disparó la alerta
             triggered_rules: Reglas que dispararon la alerta
+            zona: Nombre de la zona donde ocurrió la amenaza
             
         Returns:
             True si la alerta se inició exitosamente, False si está en cooldown
@@ -122,7 +124,7 @@ class AlertWriter:
         # Lanzar thread para escribir video
         self._write_thread = threading.Thread(
             target=self._write_video_thread,
-            args=(frames, risk_score, triggered_rules or [], filepath),
+            args=(frames, risk_score, triggered_rules or [], filepath, zona),
             daemon=True,
         )
         self._write_thread.start()
@@ -135,6 +137,7 @@ class AlertWriter:
         risk_score: float,
         triggered_rules: List[str],
         filepath: Path,
+        zona: str = "",
     ) -> None:
         """
         Thread worker que escribe el video a disco.
@@ -184,14 +187,14 @@ class AlertWriter:
             if self.backend_api_base_url and self.edge_node_id and self.edge_api_key:
                 threading.Thread(
                     target=self._request_presigned_url_and_upload,
-                    args=(filepath, risk_score, triggered_rules),
+                    args=(filepath, risk_score, triggered_rules, zona),
                     daemon=True
                 ).start()
             
         except Exception as e:
             self.logger.error(f"Error escribiendo video de alerta: {e}")
 
-    def _request_presigned_url_and_upload(self, filepath: Path, risk_score: float, rules: List[str]) -> None:
+    def _request_presigned_url_and_upload(self, filepath: Path, risk_score: float, rules: List[str], zona: str = "") -> None:
         """Solicita una URL pre-firmada al backend y sube el video directamente a S3 (PUT)."""
         try:
             import json
@@ -204,7 +207,8 @@ class AlertWriter:
                 "filename": filepath.name,
                 "risk_score": float(risk_score),
                 "rules_triggered": list(rules),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "zona": zona
             }
             
             headers = {

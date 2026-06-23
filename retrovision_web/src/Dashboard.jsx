@@ -258,8 +258,12 @@ export default function Dashboard({ token, profile }) {
 
           setAlerts((previous) => {
             const list = Array.isArray(previous) ? previous : [];
-            if (list.some((item) => item.id === newAlert.id)) {
-              return list;
+            const index = list.findIndex((item) => item.id === newAlert.id);
+            if (index !== -1) {
+              const updatedList = [...list];
+              updatedList[index] = newAlert;
+              setSelectedAlert((current) => current && current.id === newAlert.id ? newAlert : current);
+              return updatedList;
             }
             if (newAlert.risk_score > 0.7) {
               setFlashScreen(true);

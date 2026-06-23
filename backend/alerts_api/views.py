@@ -463,14 +463,22 @@ class SecurityAlertViewSet(viewsets.ReadOnlyModelViewSet):
             s3_url = request.build_absolute_uri(settings.MEDIA_URL + f"alerts/{s3_key}") if hasattr(settings, "MEDIA_URL") else f"/media/alerts/{s3_key}"
             presigned_url_str = request.build_absolute_uri(f"/api/alerts/upload-fallback/?key={s3_key}")
             
-        alert = SecurityAlert.objects.create(
-            timestamp=timestamp,
-            camera_id=camera_id,
-            risk_score=float(risk_score) if risk_score is not None else 0.75,
-            rules_triggered=rules_triggered if isinstance(rules_triggered, list) else [str(rules_triggered)],
-            video_path=s3_url,
-            zona=zona
-        )
+        # Evitar duplicados: Buscar si ya existe la alerta (creada por MQTT) comparando el nombre del archivo
+        alert = SecurityAlert.objects.filter(video_path__endswith=filename).first()
+        if alert:
+            alert.video_path = s3_url
+            if not alert.zona and zona:
+                alert.zona = zona
+            alert.save(update_fields=["video_path", "zona"])
+        else:
+            alert = SecurityAlert.objects.create(
+                timestamp=timestamp,
+                camera_id=camera_id,
+                risk_score=float(risk_score) if risk_score is not None else 0.75,
+                rules_triggered=rules_triggered if isinstance(rules_triggered, list) else [str(rules_triggered)],
+                video_path=s3_url,
+                zona=zona
+            )
         
         from asgiref.sync import async_to_sync
         from channels.layers import get_channel_layer

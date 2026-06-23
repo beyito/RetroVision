@@ -712,6 +712,7 @@ class DetectionPipeline:
                                 frames_to_save,
                                 risk_score=max_risk,
                                 triggered_rules=rules,
+                                zona=alert_zone,
                             )
 
                             if self._alert_publisher is not None:

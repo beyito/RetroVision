@@ -34,7 +34,7 @@ class AlertWriter:
     def __init__(
         self,
         alerts_dir: str = "alerts",
-        cooldown_seconds: float = 10.0,
+        cooldown_seconds: float = 30.0,
         fps: int = 30,
         backend_api_base_url: str = "",
         edge_node_id: str = "",

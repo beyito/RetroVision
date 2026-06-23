@@ -217,9 +217,11 @@ class DetectionPipeline:
             
             # Inicializar alert writer (FASE 2)
             try:
+                import os
+                cooldown_val = float(os.getenv("ALERT_COOLDOWN_SECONDS", "30.0"))
                 self._alert_writer = AlertWriter(
                     alerts_dir="alerts",
-                    cooldown_seconds=10.0,
+                    cooldown_seconds=cooldown_val,
                     backend_api_base_url=self.backend_api_base_url,
                     edge_node_id=self.edge_node_id,
                     edge_api_key=self.edge_api_key,

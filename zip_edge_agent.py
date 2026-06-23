@@ -5,7 +5,7 @@ def create_edge_zip():
     # Use relative paths based on the location of this script
     base_dir = os.path.dirname(os.path.abspath(__file__))
     source_dir = os.path.join(base_dir, "retrovision_edge")
-    output_dir = os.path.join(base_dir, "backend", "alerts_api", "static")
+    output_dir = os.path.join(base_dir, "retrovision_web", "public")
     output_zip = os.path.join(output_dir, "retrovision_edge.zip")
     
     # Ensure static directory exists

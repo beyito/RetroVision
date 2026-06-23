@@ -875,7 +875,7 @@ function EdgeOnboardingCard({ node }) {
         </div>
 
         <a
-          href={`${API_BASE_URL}/static/retrovision_edge.zip`}
+          href="/retrovision_edge.zip"
           download
           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-5 py-3 text-xs font-black uppercase tracking-wider text-slate-950 hover:bg-cyan-400 transition cursor-pointer text-center"
         >

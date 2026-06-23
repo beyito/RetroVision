@@ -144,11 +144,19 @@ export default function Dashboard({ token, profile }) {
         headers: { Authorization: `Bearer ${token}` },
       });
       
-      const results = Array.isArray(response.data) ? response.data : (response.data.results || []);
-      const count = Array.isArray(response.data) ? response.data.length : (response.data.count || 0);
+      const results = Array.isArray(response.data)
+        ? response.data
+        : (response.data && Array.isArray(response.data.results)
+            ? response.data.results
+            : []);
+      const count = Array.isArray(response.data)
+        ? response.data.length
+        : (response.data && typeof response.data.count === 'number'
+            ? response.data.count
+            : 0);
       
       setAlerts(results);
-      setTotalPages(Math.ceil(count / 20));
+      setTotalPages(Math.ceil(count / 20) || 1);
       setError(null);
     } catch (fetchError) {
       console.error('Fetch alerts failed:', fetchError);
@@ -249,8 +257,9 @@ export default function Dashboard({ token, profile }) {
           }
 
           setAlerts((previous) => {
-            if (previous.some((item) => item.id === newAlert.id)) {
-              return previous;
+            const list = Array.isArray(previous) ? previous : [];
+            if (list.some((item) => item.id === newAlert.id)) {
+              return list;
             }
             if (newAlert.risk_score > 0.7) {
               setFlashScreen(true);
@@ -259,7 +268,7 @@ export default function Dashboard({ token, profile }) {
                 playAlertSound();
               }
             }
-            return [newAlert, ...previous];
+            return [newAlert, ...list];
           });
         } catch (messageError) {
           console.error('WebSocket parse error:', messageError);
@@ -290,7 +299,9 @@ export default function Dashboard({ token, profile }) {
     };
   }, [token, selectedTenantId, selectedStoreId, selectedCameraId, scopeOptions.tenants, scopeOptions.stores]);
 
-  const filteredAlerts = alerts.filter((alert) => {
+  const alertsList = Array.isArray(alerts) ? alerts : [];
+
+  const filteredAlerts = alertsList.filter((alert) => {
     const searchText = `${alert.camera_id} ${(alert.rules_triggered || []).join(' ')}`.toLowerCase();
     const matchesSearch = searchText.includes(searchTerm.toLowerCase());
     const matchesRisk =
@@ -302,8 +313,8 @@ export default function Dashboard({ token, profile }) {
     return matchesSearch && matchesRisk;
   });
 
-  const criticalAlerts = alerts.filter((alert) => alert.risk_score > 0.7);
-  const warningAlerts = alerts.filter((alert) => alert.risk_score > 0.4 && alert.risk_score <= 0.7);
+  const criticalAlerts = alertsList.filter((alert) => alert.risk_score > 0.7);
+  const warningAlerts = alertsList.filter((alert) => alert.risk_score > 0.4 && alert.risk_score <= 0.7);
   const cameraOptions = scopeOptions.cameras.map((camera) => ({
     value: camera.camera_id,
     label: camera.display_name || camera.camera_id,
@@ -490,7 +501,7 @@ export default function Dashboard({ token, profile }) {
           <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
             <div className="bg-[#0f1524]/60 border border-gray-800 rounded-xl p-4">
               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Alertas Activas</p>
-              <h3 className="text-2xl font-black text-white mt-1 font-mono">{alerts.length}</h3>
+              <h3 className="text-2xl font-black text-white mt-1 font-mono">{alertsList.length}</h3>
               <span className="text-[9px] text-gray-500">Usuario: {profile?.username}</span>
             </div>
             <div className="border rounded-xl p-4 bg-red-950/20 border-red-900/40">

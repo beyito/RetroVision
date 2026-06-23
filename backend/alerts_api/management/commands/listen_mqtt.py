@@ -153,6 +153,42 @@ class Command(BaseCommand):
                     coordenadas_json={"points": heatmap_points},
                 )
                 LOGGER.info("Heatmap saved id=%s camera_id=%s", heatmap.id, heatmap.camera_id)
+
+                # Broadcast telemetry and heatmap updates to Channels group
+                from asgiref.sync import async_to_sync
+                from channels.layers import get_channel_layer
+                
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(
+                        "security_alerts",
+                        {
+                            "type": "telemetry_message",
+                            "telemetry": {
+                                "id": telemetry.id,
+                                "timestamp": telemetry.timestamp.isoformat(),
+                                "camera_id": telemetry.camera_id,
+                                "personas_entrantes": telemetry.personas_entrantes,
+                                "personas_salientes": telemetry.personas_salientes,
+                                "personas_en_cola": telemetry.personas_en_cola,
+                                "tiempo_espera_promedio": telemetry.tiempo_espera_promedio,
+                                "tiempo_espera_estimado": telemetry.tiempo_espera_estimado,
+                                "presion_cola_ratio": telemetry.presion_cola_ratio,
+                                "alerta_cola_activa": telemetry.alerta_cola_activa,
+                                "motivo_alerta_cola": telemetry.motivo_alerta_cola,
+                                "sectores": telemetry.sectores,
+                                "created_at": telemetry.created_at.isoformat() if telemetry.created_at else None,
+                            },
+                            "heatmap": {
+                                "id": heatmap.id,
+                                "timestamp": heatmap.timestamp.isoformat(),
+                                "camera_id": heatmap.camera_id,
+                                "coordenadas_json": heatmap.coordenadas_json,
+                                "created_at": heatmap.created_at.isoformat() if heatmap.created_at else None,
+                            }
+                        }
+                    )
+                    LOGGER.info("Telemetry and heatmap broadcasted to WebSocket group")
             elif topic.startswith("retrovision/cloud/") and topic.endswith("/snapshot/response"):
                 correlation_id = payload.get("correlation_id")
                 if correlation_id:

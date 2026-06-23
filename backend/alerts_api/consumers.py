@@ -33,3 +33,14 @@ class AlertConsumer(AsyncWebsocketConsumer):
             "type": "new_alert",
             "alert": alert_data
         }))
+
+    async def telemetry_message(self, event):
+        telemetry_data = event["telemetry"]
+        heatmap_data = event["heatmap"]
+
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps({
+            "type": "telemetry_update",
+            "telemetry": telemetry_data,
+            "heatmap": heatmap_data
+        }))

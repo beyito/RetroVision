@@ -10,7 +10,14 @@ import {
 } from 'recharts';
 import { API_BASE_URL } from './config';
 
-export default function AnalyticsPanel({ token, selectedTenantId, selectedStoreId, selectedCameraId }) {
+export default function AnalyticsPanel({
+  token,
+  selectedTenantId,
+  selectedStoreId,
+  selectedCameraId,
+  latestTelemetry,
+  latestHeatmap
+}) {
   const [telemetry, setTelemetry] = useState([]);
   const [heatmaps, setHeatmaps] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -56,10 +63,34 @@ export default function AnalyticsPanel({ token, selectedTenantId, selectedStoreI
 
   useEffect(() => {
     fetchData();
-    // Poll telemetry data every 1 second to match the edge publisher frequency
-    const interval = setInterval(fetchData, 1000);
-    return () => clearInterval(interval);
   }, [token, selectedTenantId, selectedStoreId, selectedCameraId]);
+
+  // Reactive WebSocket telemetry update listener
+  useEffect(() => {
+    if (!latestTelemetry) return;
+
+    setTelemetry((prev) => {
+      // Prevent duplicate records for the same camera at the same timestamp
+      if (prev.some((item) => item.timestamp === latestTelemetry.timestamp && item.camera_id === latestTelemetry.camera_id)) {
+        return prev;
+      }
+      return [latestTelemetry, ...prev].slice(0, 100);
+    });
+    setLastUpdated(new Date());
+  }, [latestTelemetry]);
+
+  // Reactive WebSocket heatmap update listener
+  useEffect(() => {
+    if (!latestHeatmap) return;
+
+    setHeatmaps((prev) => {
+      // Prevent duplicate records for the same camera at the same timestamp
+      if (prev.some((item) => item.timestamp === latestHeatmap.timestamp && item.camera_id === latestHeatmap.camera_id)) {
+        return prev;
+      }
+      return [latestHeatmap, ...prev].slice(0, 50);
+    });
+  }, [latestHeatmap]);
 
   // Derived metrics
   const latest = telemetry.length > 0 ? telemetry[0] : null;

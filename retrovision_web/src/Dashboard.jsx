@@ -37,6 +37,8 @@ export default function Dashboard({ token, profile }) {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [flashScreen, setFlashScreen] = useState(false);
   const [activeTab, setActiveTab] = useState('security');
+  const [latestTelemetry, setLatestTelemetry] = useState(null);
+  const [latestHeatmap, setLatestHeatmap] = useState(null);
   const [scopeOptions, setScopeOptions] = useState({
     tenants: [],
     stores: [],
@@ -183,6 +185,38 @@ export default function Dashboard({ token, profile }) {
       ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+          
+          if (payload.type === 'telemetry_update') {
+            const telemetryCam = payload.telemetry.camera_id;
+            
+            const cameraMatches = selectedCameraId === 'ALL' || telemetryCam === selectedCameraId;
+            
+            let storeMatches = true;
+            if (selectedStoreId !== 'ALL') {
+              const camObj = scopeOptions.cameras.find(c => String(c.camera_id) === String(telemetryCam));
+              if (camObj && String(camObj.store) !== String(selectedStoreId)) {
+                storeMatches = false;
+              }
+            }
+            
+            let tenantMatches = true;
+            if (selectedTenantId !== 'ALL') {
+              const camObj = scopeOptions.cameras.find(c => String(c.camera_id) === String(telemetryCam));
+              if (camObj) {
+                const storeObj = scopeOptions.stores.find(s => String(s.id) === String(camObj.store));
+                if (storeObj && String(storeObj.tenant) !== String(selectedTenantId)) {
+                  tenantMatches = false;
+                }
+              }
+            }
+            
+            if (cameraMatches && storeMatches && tenantMatches) {
+              setLatestTelemetry(payload.telemetry);
+              setLatestHeatmap(payload.heatmap);
+            }
+            return;
+          }
+          
           if (payload.type !== 'new_alert') return;
 
           const newAlert = payload.alert;
@@ -425,6 +459,8 @@ export default function Dashboard({ token, profile }) {
           selectedTenantId={selectedTenantId}
           selectedStoreId={selectedStoreId}
           selectedCameraId={selectedCameraId}
+          latestTelemetry={latestTelemetry}
+          latestHeatmap={latestHeatmap}
         />
       ) : activeTab === 'reports' ? (
         <ReportsPanel

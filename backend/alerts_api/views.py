@@ -454,7 +454,7 @@ class SecurityAlertViewSet(viewsets.ReadOnlyModelViewSet):
                     },
                     ExpiresIn=3600,
                 )
-                s3_url = f"https://{bucket_name}.s3.amazonaws.com/{s3_key}"
+                s3_url = f"https://{bucket_name}.s3.{aws_region}.amazonaws.com/{s3_key}"
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error(f"Failed to generate pre-signed URL: {e}")

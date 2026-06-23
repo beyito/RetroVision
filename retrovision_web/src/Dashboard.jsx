@@ -328,6 +328,11 @@ export default function Dashboard({ token, profile }) {
     }
   };
 
+  const videoUrl = selectedAlert?.video_path && selectedAlert.video_path.includes('.s3.amazonaws.com')
+    ? selectedAlert.video_path.replace('.s3.amazonaws.com', '.s3.sa-east-1.amazonaws.com')
+    : (selectedAlert?.video_path || '');
+  const isNetworkVideo = videoUrl.startsWith('http://') || videoUrl.startsWith('https://');
+
   return (
     <div className={`transition-colors duration-300 rounded-2xl ${flashScreen ? 'bg-red-950/40 p-4 border border-red-500' : ''}`}>
       {flashScreen && (
@@ -669,9 +674,9 @@ export default function Dashboard({ token, profile }) {
                   </div>
 
                   <div className="relative aspect-video bg-black rounded-lg border border-gray-800 overflow-hidden flex items-center justify-center">
-                    {selectedAlert.video_path && (selectedAlert.video_path.startsWith('http://') || selectedAlert.video_path.startsWith('https://')) ? (
+                    {videoUrl && isNetworkVideo ? (
                       <video
-                        src={selectedAlert.video_path}
+                        src={videoUrl}
                         controls
                         className="w-full h-full object-cover"
                       />
@@ -680,7 +685,7 @@ export default function Dashboard({ token, profile }) {
                         <div className="bg-[#0b0f19]/80 border border-gray-700/40 p-3 rounded-lg max-w-[220px] text-[10px]">
                           <Video className="w-5 h-5 text-cyan-400 mx-auto mb-1" />
                           <p className="font-semibold text-gray-200">Clip en Nodo Local</p>
-                          <p className="text-[9px] text-gray-400 font-mono truncate">{selectedAlert.video_path || 'Sin video registrado'}</p>
+                          <p className="text-[9px] text-gray-400 font-mono truncate">{videoUrl || 'Sin video registrado'}</p>
                         </div>
                       </div>
                     )}
@@ -694,17 +699,17 @@ export default function Dashboard({ token, profile }) {
                       </div>
                       <div>
                         <span>Video</span>
-                        <span className="font-mono text-gray-200 block mt-0.5 truncate">{selectedAlert.video_path || 'N/A'}</span>
+                        <span className="font-mono text-gray-200 block mt-0.5 truncate">{videoUrl || 'N/A'}</span>
                       </div>
                     </div>
                     <div className="flex gap-2 pt-2 border-t border-gray-800/80">
                       <button
                         type="button"
                         onClick={() => {
-                          if (selectedAlert.video_path && (selectedAlert.video_path.startsWith('http://') || selectedAlert.video_path.startsWith('https://'))) {
-                            window.open(selectedAlert.video_path, '_blank');
+                          if (videoUrl && isNetworkVideo) {
+                            window.open(videoUrl, '_blank');
                           } else {
-                            window.alert(`Reproduciendo clip local: ${selectedAlert.video_path || 'No disponible'}`);
+                            window.alert(`Reproduciendo clip local: ${videoUrl || 'No disponible'}`);
                           }
                         }}
                         className="flex-1 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"

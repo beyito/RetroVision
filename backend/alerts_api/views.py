@@ -372,6 +372,190 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = Telemetria_Afluencia.objects.all().order_by('-timestamp')
         return _apply_context_filters(self.request, queryset)[:100]
 
+    @action(detail=False, methods=['get'])
+    def historical(self, request):
+        from django.utils import timezone
+        from django.db.models.functions import Extract
+        from datetime import timedelta
+        from collections import defaultdict
+        
+        # 1. Determine parameters
+        time_range = request.query_params.get("range", "7days")
+        days = 30 if time_range == "30days" else 7
+        
+        # Calculate date bounds
+        start_date = timezone.now() - timedelta(days=days)
+        
+        # 2. Get scoped queryset
+        base_queryset = Telemetria_Afluencia.objects.filter(timestamp__gte=start_date).order_by('timestamp')
+        queryset = _apply_context_filters(request, base_queryset)
+        
+        # 3. Apply Sampling (Downsampling) based on range to prevent payload overloading
+        # Sample every 15 minutes for 30days, sample every 5 minutes for 7days
+        sampling_minutes = [0, 15, 30, 45] if time_range == "30days" else [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]
+        
+        records = queryset.annotate(
+            minute=Extract('timestamp', 'minute'),
+            second=Extract('timestamp', 'second')
+        ).filter(
+            minute__in=sampling_minutes,
+            second__lte=10 # Only capture the start of the sample minute to get a single record per interval
+        )
+        
+        # If no records in the sample, fallback to all records within the range (up to 2000 records) to avoid blank dashboard
+        record_list = list(records)
+        if len(record_list) == 0:
+            record_list = list(queryset[:2000])
+            
+        total_records = len(record_list)
+        if total_records == 0:
+            return Response({
+                "total_records_analyzed": 0,
+                "total_visitors_estimated": 0,
+                "time_range": time_range,
+                "peak_hour": "N/A",
+                "busiest_sector": "Ninguno",
+                "queue_metrics": {
+                    "avg_people_in_queue": 0.0,
+                    "avg_wait_time_seconds": 0.0,
+                    "max_wait_time_seconds": 0.0,
+                    "saturation_percentage": 0.0
+                },
+                "sectors_metrics": {},
+                "hourly_inflow": [],
+                "daily_inflow": []
+            })
+            
+        # 4. Aggregate metrics
+        total_queue_people = 0
+        total_wait_time = 0.0
+        max_wait_time = 0.0
+        saturated_records_count = 0
+        
+        sector_totals = defaultdict(int)
+        sector_maxes = defaultdict(int)
+        sector_record_counts = defaultdict(int)
+        
+        # For hourly inflow (entries by hour of the day)
+        hourly_inflow_by_hour = defaultdict(int)
+        
+        # For daily inflow
+        daily_inflow_by_day = defaultdict(int)
+        
+        # To calculate hourly flow and daily flow properly:
+        # Sum of positive entry differences
+        prev_entrantes_by_cam = {}
+        for r in record_list:
+            cam_id = r.camera_id
+            
+            # Queue metrics
+            total_queue_people += r.personas_en_cola
+            total_wait_time += r.tiempo_espera_promedio
+            if r.tiempo_espera_promedio > max_wait_time:
+                max_wait_time = r.tiempo_espera_promedio
+            if r.alerta_cola_activa or r.personas_en_cola >= 3:
+                saturated_records_count += 1
+                
+            # Sectores metrics
+            sectores = r.sectores or {}
+            if isinstance(sectores, dict):
+                for name, count in sectores.items():
+                    normalized_name = str(name).strip().capitalize() if name else "Desconocido"
+                    val = int(count or 0)
+                    sector_totals[normalized_name] += val
+                    sector_record_counts[normalized_name] += 1
+                    if val > sector_maxes[normalized_name]:
+                        sector_maxes[normalized_name] = val
+                        
+            # Flow differences
+            val_entrantes = r.personas_entrantes
+            hour = r.timestamp.hour
+            day_name = r.timestamp.strftime("%A") # e.g. "Monday"
+            
+            if cam_id in prev_entrantes_by_cam:
+                diff = val_entrantes - prev_entrantes_by_cam[cam_id]
+                if diff > 0:
+                    hourly_inflow_by_hour[hour] += diff
+                    daily_inflow_by_day[day_name] += diff
+            prev_entrantes_by_cam[cam_id] = val_entrantes
+            
+        # Compute final aggregates
+        avg_people_in_queue = total_queue_people / total_records
+        avg_wait_time = total_wait_time / total_records
+        saturation_percentage = (saturated_records_count / total_records) * 100.0
+        
+        sectors_metrics = {}
+        for name in sector_totals.keys():
+            sectors_metrics[name] = {
+                "avg_occupancy": round(sector_totals[name] / sector_record_counts[name], 1),
+                "max_occupancy": sector_maxes[name]
+            }
+            
+        # Format hourly inflow distribution
+        hourly_inflow = []
+        for h in range(24):
+            hourly_inflow.append({
+                "hour": f"{h:02d}:00",
+                "inflow": hourly_inflow_by_hour.get(h, 0)
+            })
+            
+        # Format daily inflow distribution
+        day_mapping = {
+            "Monday": "Lunes",
+            "Tuesday": "Martes",
+            "Wednesday": "Miércoles",
+            "Thursday": "Jueves",
+            "Friday": "Viernes",
+            "Saturday": "Sábado",
+            "Sunday": "Domingo"
+        }
+        day_order = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+        
+        daily_inflow = []
+        for eng_name, esp_name in day_mapping.items():
+            daily_inflow.append({
+                "day": esp_name,
+                "inflow": daily_inflow_by_day.get(eng_name, 0)
+            })
+        # Order daily inflow to match calendar week
+        daily_inflow.sort(key=lambda x: day_order.index(x["day"]) if x["day"] in day_order else 9)
+        
+        # Calculate total visitors estimated
+        total_visitors_estimated = sum(d["inflow"] for d in daily_inflow)
+        
+        # Find peak hour
+        peak_hour_val = -1
+        peak_hour_str = "N/A"
+        for h_data in hourly_inflow:
+            if h_data["inflow"] > peak_hour_val:
+                peak_hour_val = h_data["inflow"]
+                peak_hour_str = h_data["hour"]
+                
+        # Find busiest sector
+        busiest_sector = "Ninguno"
+        highest_avg = 0.0
+        for s_name, s_data in sectors_metrics.items():
+            if s_data["avg_occupancy"] > highest_avg:
+                highest_avg = s_data["avg_occupancy"]
+                busiest_sector = s_name
+        
+        return Response({
+            "total_records_analyzed": total_records,
+            "total_visitors_estimated": total_visitors_estimated,
+            "time_range": time_range,
+            "peak_hour": peak_hour_str,
+            "busiest_sector": busiest_sector,
+            "queue_metrics": {
+                "avg_people_in_queue": round(avg_people_in_queue, 1),
+                "avg_wait_time_seconds": round(avg_wait_time, 1),
+                "max_wait_time_seconds": round(max_wait_time, 1),
+                "saturation_percentage": round(saturation_percentage, 1)
+            },
+            "sectors_metrics": sectors_metrics,
+            "hourly_inflow": hourly_inflow,
+            "daily_inflow": daily_inflow
+        })
+
 class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows visual heatmaps to be viewed."""
     permission_classes = [IsAuthenticated]

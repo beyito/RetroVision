@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 import AnalyticsPanel from './AnalyticsPanel';
+import ReportsPanel from './components/ReportsPanel';
 import { API_BASE_URL, WS_BASE_URL } from './config';
 
 
@@ -300,6 +301,17 @@ export default function Dashboard({ token, profile }) {
             <BarChart2 className="w-4 h-4" />
             Analitica
           </button>
+          <button
+            onClick={() => setActiveTab('reports')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs uppercase tracking-wider font-bold transition-all cursor-pointer ${
+              activeTab === 'reports'
+                ? 'bg-purple-950/40 border-purple-500 text-purple-400'
+                : 'bg-transparent border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            <BarChart2 className="w-4 h-4" />
+            Reportes
+          </button>
         </div>
 
         <div className="flex items-center gap-3">
@@ -409,6 +421,13 @@ export default function Dashboard({ token, profile }) {
 
       {activeTab === 'analytics' ? (
         <AnalyticsPanel
+          token={token}
+          selectedTenantId={selectedTenantId}
+          selectedStoreId={selectedStoreId}
+          selectedCameraId={selectedCameraId}
+        />
+      ) : activeTab === 'reports' ? (
+        <ReportsPanel
           token={token}
           selectedTenantId={selectedTenantId}
           selectedStoreId={selectedStoreId}

@@ -352,11 +352,19 @@ class CameraViewSet(viewsets.ModelViewSet):
         return JsonResponse({"detail": "Timeout esperando respuesta de snapshot del Edge Node (4s)."}, status=504)
 
 
+from rest_framework.pagination import PageNumberPagination
+
+class AlertsPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
 class SecurityAlertViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows security alerts to be viewed."""
     permission_classes = [IsAuthenticated]
     queryset = SecurityAlert.objects.none()
     serializer_class = SecurityAlertSerializer
+    pagination_class = AlertsPagination
 
     def get_queryset(self):
         queryset = SecurityAlert.objects.all().order_by('-timestamp')

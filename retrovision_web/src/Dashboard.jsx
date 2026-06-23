@@ -39,6 +39,8 @@ export default function Dashboard({ token, profile }) {
   const [activeTab, setActiveTab] = useState('security');
   const [latestTelemetry, setLatestTelemetry] = useState(null);
   const [latestHeatmap, setLatestHeatmap] = useState(null);
+  const [alertsPage, setAlertsPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [scopeOptions, setScopeOptions] = useState({
     tenants: [],
     stores: [],
@@ -134,10 +136,19 @@ export default function Dashboard({ token, profile }) {
     if (!token) return;
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/alerts/${buildQueryString(true)}`, {
+      const qString = buildQueryString(true);
+      const params = new URLSearchParams(qString);
+      params.set('page', alertsPage);
+      
+      const response = await axios.get(`${API_BASE_URL}/api/alerts/?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setAlerts(response.data);
+      
+      const results = Array.isArray(response.data) ? response.data : (response.data.results || []);
+      const count = Array.isArray(response.data) ? response.data.length : (response.data.count || 0);
+      
+      setAlerts(results);
+      setTotalPages(Math.ceil(count / 20));
       setError(null);
     } catch (fetchError) {
       console.error('Fetch alerts failed:', fetchError);
@@ -149,7 +160,12 @@ export default function Dashboard({ token, profile }) {
 
   useEffect(() => {
     fetchAlerts();
-  }, [token, selectedTenantId, selectedStoreId, selectedCameraId]);
+  }, [token, selectedTenantId, selectedStoreId, selectedCameraId, alertsPage]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setAlertsPage(1);
+  }, [selectedTenantId, selectedStoreId, selectedCameraId]);
 
   useEffect(() => {
     fetchScopeOptions();
@@ -529,69 +545,94 @@ export default function Dashboard({ token, profile }) {
           </section>
 
           <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 flex flex-col gap-3 max-h-[560px] overflow-y-auto pr-1">
-              {filteredAlerts.length === 0 ? (
-                <div className="bg-[#0f1524]/30 border border-gray-800 rounded-xl p-12 text-center">
-                  <ShieldCheck className="w-10 h-10 text-gray-600 mb-2 mx-auto" />
-                  <p className="text-xs font-semibold text-gray-400">Sin alertas visibles para este usuario.</p>
+            <div className="lg:col-span-7 flex flex-col gap-3">
+              <div className="flex flex-col gap-3 max-h-[500px] overflow-y-auto pr-1">
+                {filteredAlerts.length === 0 ? (
+                  <div className="bg-[#0f1524]/30 border border-gray-800 rounded-xl p-12 text-center">
+                    <ShieldCheck className="w-10 h-10 text-gray-600 mb-2 mx-auto" />
+                    <p className="text-xs font-semibold text-gray-400">Sin alertas visibles para este usuario.</p>
+                  </div>
+                ) : (
+                  filteredAlerts.map((alert) => {
+                    const isCritical = alert.risk_score > 0.7;
+                    return (
+                      <button
+                        type="button"
+                        key={alert.id}
+                        onClick={() => setSelectedAlert(alert)}
+                        className={`text-left rounded-xl border p-4 shadow-sm transition-all duration-200 ${
+                          selectedAlert?.id === alert.id
+                            ? 'bg-slate-900 border-cyan-500'
+                            : isCritical
+                              ? 'bg-red-950/10 border-red-900/60 hover:border-red-500'
+                              : 'bg-[#0f1524]/60 border-gray-800 hover:border-gray-700'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                              <span className="flex items-center gap-1 text-gray-300 bg-gray-800 px-2 py-0.5 rounded font-mono font-semibold">
+                                <Camera className="w-3 h-3 text-indigo-400" />
+                                {alert.camera_display_name || alert.camera_id}
+                              </span>
+                              {alert.zona && (
+                                <span className="flex items-center gap-1 text-purple-200 bg-purple-900/30 border border-purple-500/30 px-2 py-0.5 rounded font-mono font-bold animate-pulse">
+                                  📍 {alert.zona}
+                                </span>
+                              )}
+                              {alert.tenant_name && (
+                                <span className="text-gray-400 font-mono">{alert.tenant_name}</span>
+                              )}
+                              {alert.store_name && (
+                                <span className="text-gray-500 font-mono">/ {alert.store_name}</span>
+                              )}
+                              <span className="flex items-center gap-1 text-gray-400 font-mono">
+                                <Clock className="w-3 h-3" />
+                                {formatTimestamp(alert.timestamp)}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {(alert.rules_triggered || []).map((rule) => (
+                                <span key={`${alert.id}-${rule}`} className="text-[9px] px-2 py-0.5 rounded-full font-medium bg-gray-800 text-gray-300 border border-gray-700">
+                                  {rule}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[9px] text-gray-500 font-bold uppercase">Score</span>
+                            <div className={`text-lg font-black font-mono leading-none ${isCritical ? 'text-red-500' : 'text-amber-400'}`}>
+                              {Math.round(alert.risk_score * 100)}%
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex justify-between items-center bg-[#0f1524]/60 border border-gray-800 p-3 rounded-xl text-xs">
+                  <button
+                    disabled={alertsPage <= 1}
+                    onClick={() => setAlertsPage(prev => Math.max(1, prev - 1))}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
+                  >
+                    Anterior
+                  </button>
+                  <span className="text-gray-400 font-mono">
+                    Página {alertsPage} de {totalPages}
+                  </span>
+                  <button
+                    disabled={alertsPage >= totalPages}
+                    onClick={() => setAlertsPage(prev => Math.min(totalPages, prev + 1))}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
+                  >
+                    Siguiente
+                  </button>
                 </div>
-              ) : (
-                filteredAlerts.map((alert) => {
-                  const isCritical = alert.risk_score > 0.7;
-                  return (
-                    <button
-                      type="button"
-                      key={alert.id}
-                      onClick={() => setSelectedAlert(alert)}
-                      className={`text-left rounded-xl border p-4 shadow-sm transition-all duration-200 ${
-                        selectedAlert?.id === alert.id
-                          ? 'bg-slate-900 border-cyan-500'
-                          : isCritical
-                            ? 'bg-red-950/10 border-red-900/60 hover:border-red-500'
-                            : 'bg-[#0f1524]/60 border-gray-800 hover:border-gray-700'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                            <span className="flex items-center gap-1 text-gray-300 bg-gray-800 px-2 py-0.5 rounded font-mono font-semibold">
-                              <Camera className="w-3 h-3 text-indigo-400" />
-                              {alert.camera_display_name || alert.camera_id}
-                            </span>
-                            {alert.zona && (
-                              <span className="flex items-center gap-1 text-purple-200 bg-purple-900/30 border border-purple-500/30 px-2 py-0.5 rounded font-mono font-bold animate-pulse">
-                                📍 {alert.zona}
-                              </span>
-                            )}
-                            {alert.tenant_name && (
-                              <span className="text-gray-400 font-mono">{alert.tenant_name}</span>
-                            )}
-                            {alert.store_name && (
-                              <span className="text-gray-500 font-mono">/ {alert.store_name}</span>
-                            )}
-                            <span className="flex items-center gap-1 text-gray-400 font-mono">
-                              <Clock className="w-3 h-3" />
-                              {formatTimestamp(alert.timestamp)}
-                            </span>
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {(alert.rules_triggered || []).map((rule) => (
-                              <span key={`${alert.id}-${rule}`} className="text-[9px] px-2 py-0.5 rounded-full font-medium bg-gray-800 text-gray-300 border border-gray-700">
-                                {rule}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-[9px] text-gray-500 font-bold uppercase">Score</span>
-                          <div className={`text-lg font-black font-mono leading-none ${isCritical ? 'text-red-500' : 'text-amber-400'}`}>
-                            {Math.round(alert.risk_score * 100)}%
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })
               )}
             </div>
 

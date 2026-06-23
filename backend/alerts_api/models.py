@@ -170,6 +170,9 @@ class Telemetria_Afluencia(models.Model):
 
     class Meta:
         ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["camera_id", "-timestamp"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.camera_id} | In: {self.personas_entrantes} | Out: {self.personas_salientes} | {self.timestamp.isoformat()}"
@@ -184,6 +187,9 @@ class Heatmaps(models.Model):
 
     class Meta:
         ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["camera_id", "-timestamp"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.camera_id} | Heatmap | {self.timestamp.isoformat()}"

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import threading
 import time
-
+import numpy as np
 from .exceptions import CameraInitializationError, CameraAccessError, FrameProcessingError
 
 

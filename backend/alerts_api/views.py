@@ -515,6 +515,23 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = Telemetria_Afluencia.objects.all().order_by('-timestamp')
         return _apply_context_filters(self.request, queryset)[:100]
 
+    def list(self, request, *args, **kwargs):
+        user = request.user
+        tenant = request.query_params.get("tenant") or ""
+        store = request.query_params.get("store") or ""
+        camera_id = request.query_params.get("camera_id") or ""
+        
+        user_key = f"user:{user.id if hasattr(user, 'id') else user.username}"
+        cache_key = f"telemetry_list:{user_key}:{tenant}:{store}:{camera_id}"
+        
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+            
+        response = super().list(request, *args, **kwargs)
+        cache.set(cache_key, response.data, timeout=2)  # Cache for 2 seconds
+        return response
+
     @action(detail=False, methods=['get'])
     def historical(self, request):
         from django.utils import timezone
@@ -522,8 +539,20 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
         from datetime import timedelta
         from collections import defaultdict
         
-        # 1. Determine parameters
+        user = request.user
         time_range = request.query_params.get("range", "7days")
+        tenant = request.query_params.get("tenant") or ""
+        store = request.query_params.get("store") or ""
+        camera_id = request.query_params.get("camera_id") or ""
+        
+        user_key = f"user:{user.id if hasattr(user, 'id') else user.username}"
+        cache_key = f"historical_telemetry:{user_key}:{time_range}:{tenant}:{store}:{camera_id}"
+        
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+            
+        # 1. Determine parameters
         days = 30 if time_range == "30days" else 7
         
         # Calculate date bounds
@@ -552,7 +581,7 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
             
         total_records = len(record_list)
         if total_records == 0:
-            return Response({
+            resp_data = {
                 "total_records_analyzed": 0,
                 "total_visitors_estimated": 0,
                 "time_range": time_range,
@@ -567,7 +596,9 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
                 "sectors_metrics": {},
                 "hourly_inflow": [],
                 "daily_inflow": []
-            })
+            }
+            cache.set(cache_key, resp_data, timeout=300)
+            return Response(resp_data)
             
         # 4. Aggregate metrics
         total_queue_people = 0
@@ -682,7 +713,7 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
                 highest_avg = s_data["avg_occupancy"]
                 busiest_sector = s_name
         
-        return Response({
+        resp_data = {
             "total_records_analyzed": total_records,
             "total_visitors_estimated": total_visitors_estimated,
             "time_range": time_range,
@@ -697,7 +728,10 @@ class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
             "sectors_metrics": sectors_metrics,
             "hourly_inflow": hourly_inflow,
             "daily_inflow": daily_inflow
-        })
+        }
+        cache.set(cache_key, resp_data, timeout=300)  # Cache for 5 minutes
+        return Response(resp_data)
+
 
 class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows visual heatmaps to be viewed."""
@@ -708,3 +742,20 @@ class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         queryset = Heatmaps.objects.all().order_by('-timestamp')
         return _apply_context_filters(self.request, queryset)[:50]
+
+    def list(self, request, *args, **kwargs):
+        user = request.user
+        tenant = request.query_params.get("tenant") or ""
+        store = request.query_params.get("store") or ""
+        camera_id = request.query_params.get("camera_id") or ""
+        
+        user_key = f"user:{user.id if hasattr(user, 'id') else user.username}"
+        cache_key = f"heatmaps_list:{user_key}:{tenant}:{store}:{camera_id}"
+        
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+            
+        response = super().list(request, *args, **kwargs)
+        cache.set(cache_key, response.data, timeout=2)  # Cache for 2 seconds
+        return response

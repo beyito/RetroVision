@@ -29,7 +29,9 @@ build/
 *.weights
 
 # 6. Evidencia de Video (No subir grabaciones locales)
-alerts/*.mp4
+alerts/
+backend/alerts/
+retrovision_edge/alerts/
 *.avi
 
 # 7. Bases de datos locales

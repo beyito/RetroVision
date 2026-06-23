@@ -581,13 +581,21 @@ export default function Dashboard({ token, profile }) {
                   </div>
 
                   <div className="relative aspect-video bg-black rounded-lg border border-gray-800 overflow-hidden flex items-center justify-center">
-                    <div className="z-20 text-center flex flex-col items-center">
-                      <div className="bg-[#0b0f19]/80 border border-gray-700/40 p-3 rounded-lg max-w-[220px] text-[10px]">
-                        <Video className="w-5 h-5 text-cyan-400 mx-auto mb-1" />
-                        <p className="font-semibold text-gray-200">Clip en Nodo Local</p>
-                        <p className="text-[9px] text-gray-400 font-mono truncate">{selectedAlert.video_path || 'Sin video registrado'}</p>
+                    {selectedAlert.video_path && (selectedAlert.video_path.startsWith('http://') || selectedAlert.video_path.startsWith('https://')) ? (
+                      <video
+                        src={selectedAlert.video_path}
+                        controls
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="z-20 text-center flex flex-col items-center">
+                        <div className="bg-[#0b0f19]/80 border border-gray-700/40 p-3 rounded-lg max-w-[220px] text-[10px]">
+                          <Video className="w-5 h-5 text-cyan-400 mx-auto mb-1" />
+                          <p className="font-semibold text-gray-200">Clip en Nodo Local</p>
+                          <p className="text-[9px] text-gray-400 font-mono truncate">{selectedAlert.video_path || 'Sin video registrado'}</p>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   <div className="bg-[#0a0f1d] border border-gray-800/80 rounded-xl p-3 flex flex-col gap-2.5 text-[11px]">
@@ -604,7 +612,13 @@ export default function Dashboard({ token, profile }) {
                     <div className="flex gap-2 pt-2 border-t border-gray-800/80">
                       <button
                         type="button"
-                        onClick={() => window.alert(`Reproduciendo clip: ${selectedAlert.video_path || 'No disponible'}`)}
+                        onClick={() => {
+                          if (selectedAlert.video_path && (selectedAlert.video_path.startsWith('http://') || selectedAlert.video_path.startsWith('https://'))) {
+                            window.open(selectedAlert.video_path, '_blank');
+                          } else {
+                            window.alert(`Reproduciendo clip local: ${selectedAlert.video_path || 'No disponible'}`);
+                          }
+                        }}
                         className="flex-1 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
                       >
                         <Play className="w-3 h-3 fill-white" /> Reproducir Clip

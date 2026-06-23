@@ -77,6 +77,9 @@ class DetectionPipeline:
         counting_line_direction: str = "forward",
         custom_zones: Optional[list] = None,
         mqtt_keep_alive: int = 60,
+        backend_api_base_url: str = "",
+        edge_node_id: str = "",
+        edge_api_key: str = "",
     ) -> None:
         """
         Inicializa el pipeline de detección.
@@ -102,6 +105,9 @@ class DetectionPipeline:
         self.max_allowed_wait_seconds = max_allowed_wait_seconds
         self.cashier_count = max(1, cashier_count)
         self.service_rate_per_cashier_per_minute = max(0.1, service_rate_per_cashier_per_minute)
+        self.backend_api_base_url = backend_api_base_url
+        self.edge_node_id = edge_node_id
+        self.edge_api_key = edge_api_key
         
         # Trajectory trail history: track_id -> list of centroids
         self.trajectory_history = {}
@@ -211,7 +217,14 @@ class DetectionPipeline:
             
             # Inicializar alert writer (FASE 2)
             try:
-                self._alert_writer = AlertWriter(alerts_dir="alerts", cooldown_seconds=10.0)
+                self._alert_writer = AlertWriter(
+                    alerts_dir="alerts",
+                    cooldown_seconds=10.0,
+                    backend_api_base_url=self.backend_api_base_url,
+                    edge_node_id=self.edge_node_id,
+                    edge_api_key=self.edge_api_key,
+                    camera_id=self.camera_id,
+                )
             except Exception as e:
                 self._alert_writer = None
                 self.logger.warning(f"AlertWriter no inicializado: {e}")

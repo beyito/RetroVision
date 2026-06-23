@@ -198,6 +198,9 @@ class EdgeServiceRunner:
                         counting_line=counting_line,
                         counting_line_direction=counting_line_direction,
                         custom_zones=custom_zones,
+                        backend_api_base_url=self.config.backend_api.base_url,
+                        edge_node_id=edge_node_id,
+                        edge_api_key=edge_api_key,
                     )
                     
                     t = threading.Thread(target=camera_thread_loop, args=(pipeline, cam_id, video_src), daemon=True)
@@ -272,6 +275,9 @@ class EdgeServiceRunner:
                     counting_line=self.config.mqtt.counting_line,
                     counting_line_direction=self.config.mqtt.counting_line_direction,
                     custom_zones=self.config.mqtt.custom_zones,
+                    backend_api_base_url=self.config.backend_api.base_url,
+                    edge_node_id=self.config.backend_api.edge_node_id,
+                    edge_api_key=self.config.backend_api.edge_api_key,
                 )
 
                 self.pipeline.start()

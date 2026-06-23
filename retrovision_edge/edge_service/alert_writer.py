@@ -36,6 +36,10 @@ class AlertWriter:
         alerts_dir: str = "alerts",
         cooldown_seconds: float = 10.0,
         fps: int = 30,
+        backend_api_base_url: str = "",
+        edge_node_id: str = "",
+        edge_api_key: str = "",
+        camera_id: str = "",
     ) -> None:
         """
         Inicializa el escritor de alertas.
@@ -50,6 +54,10 @@ class AlertWriter:
         self.alerts_dir = Path(alerts_dir)
         self.cooldown_seconds = cooldown_seconds
         self.fps = fps
+        self.backend_api_base_url = backend_api_base_url
+        self.edge_node_id = edge_node_id
+        self.edge_api_key = edge_api_key
+        self.camera_id = camera_id
         
         # Crear directorio de alertas si no existe
         self.alerts_dir.mkdir(parents=True, exist_ok=True)
@@ -172,8 +180,73 @@ class AlertWriter:
                 f"reglas: {', '.join(triggered_rules)})"
             )
             
+            # Subida directa a S3 mediante URL pre-firmada
+            if self.backend_api_base_url and self.edge_node_id and self.edge_api_key:
+                threading.Thread(
+                    target=self._request_presigned_url_and_upload,
+                    args=(filepath, risk_score, triggered_rules),
+                    daemon=True
+                ).start()
+            
         except Exception as e:
             self.logger.error(f"Error escribiendo video de alerta: {e}")
+
+    def _request_presigned_url_and_upload(self, filepath: Path, risk_score: float, rules: List[str]) -> None:
+        """Solicita una URL pre-firmada al backend y sube el video directamente a S3 (PUT)."""
+        try:
+            import json
+            from urllib import request, error
+            
+            # 1. Solicitar URL pre-firmada del backend
+            url = f"{self.backend_api_base_url.rstrip('/')}/api/alerts/presigned-url/"
+            payload = {
+                "camera_id": self.camera_id,
+                "filename": filepath.name,
+                "risk_score": float(risk_score),
+                "rules_triggered": list(rules),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            headers = {
+                "X-Edge-Node-Id": self.edge_node_id,
+                "X-Edge-Api-Key": self.edge_api_key,
+                "Content-Type": "application/json"
+            }
+            
+            self.logger.info(f"Solicitando URL pre-firmada de S3 para {filepath.name}...")
+            
+            body = json.dumps(payload).encode("utf-8")
+            req = request.Request(url, data=body, headers=headers, method="POST")
+            
+            with request.urlopen(req, timeout=15) as response:
+                res_content = response.read().decode("utf-8")
+                res_data = json.loads(res_content)
+                
+            presigned_url = res_data.get("presigned_url")
+            alert_id = res_data.get("alert_id")
+            
+            if not presigned_url:
+                self.logger.error("No se recibió una URL pre-firmada en la respuesta del backend.")
+                return
+                
+            # 2. Subir directamente a S3 (PUT HTTP)
+            self.logger.info(f"Subiendo video directamente a S3 (PUT) para Alerta #{alert_id}...")
+            
+            with open(filepath, "rb") as f:
+                file_data = f.read()
+                
+            put_headers = {
+                "Content-Type": "video/mp4"
+            }
+            
+            put_req = request.Request(presigned_url, data=file_data, headers=put_headers, method="PUT")
+            with request.urlopen(put_req, timeout=60) as put_response:
+                self.logger.info(f"Subida S3 completada con éxito. Código HTTP: {put_response.status}")
+                
+        except error.HTTPError as exc:
+            self.logger.error(f"Fallo al subir a S3 (HTTPError {exc.code}): {exc.read().decode('utf-8', errors='ignore')}")
+        except Exception as e:
+            self.logger.error(f"Error al solicitar URL pre-firmada y subir: {e}")
     
     def _get_risk_level(self, risk_score: float) -> str:
         """

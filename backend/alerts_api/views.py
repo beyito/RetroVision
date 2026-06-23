@@ -362,6 +362,149 @@ class SecurityAlertViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = SecurityAlert.objects.all().order_by('-timestamp')
         return _apply_context_filters(self.request, queryset)
 
+    @action(detail=False, methods=["post"], url_path="presigned-url", authentication_classes=(EdgeNodeAuthentication,), permission_classes=[IsAuthenticated])
+    def presigned_url(self, request):
+        import os
+        import boto3
+        from django.utils.text import slugify
+        from django.utils.dateparse import parse_datetime
+        from django.utils import timezone
+        from .models import EdgeNode, Camera, SecurityAlert
+        
+        edge_node = request.user
+        if not isinstance(edge_node, EdgeNode):
+            return JsonResponse({"detail": "Solo los nodos Edge autorizados pueden solicitar URLs pre-firmadas."}, status=403)
+            
+        camera_id = request.data.get("camera_id")
+        filename = request.data.get("filename")
+        risk_score = request.data.get("risk_score")
+        rules_triggered = request.data.get("rules_triggered", [])
+        zona = request.data.get("zona", "")
+        raw_timestamp = request.data.get("timestamp")
+        
+        if not camera_id or not filename:
+            return JsonResponse({"detail": "camera_id y filename son requeridos."}, status=400)
+            
+        try:
+            camera = Camera.objects.select_related("store", "store__tenant").get(
+                camera_id=camera_id,
+                store=edge_node.store
+            )
+        except Camera.DoesNotExist:
+            return JsonResponse({"detail": "La cámara no pertenece a este nodo Edge o no existe."}, status=404)
+            
+        tenant_name = camera.store.tenant.name
+        store_name = camera.store.name
+        
+        tenant_folder = slugify(tenant_name)
+        store_folder = slugify(store_name)
+        camera_folder = slugify(camera_id)
+        s3_key = f"{tenant_folder}/{store_folder}/{camera_folder}/alertas/{filename}"
+        
+        bucket_name = getattr(settings, "AWS_STORAGE_BUCKET_NAME", None)
+        aws_access_key = getattr(settings, "AWS_ACCESS_KEY_ID", None)
+        aws_secret_key = getattr(settings, "AWS_SECRET_ACCESS_KEY", None)
+        aws_region = getattr(settings, "AWS_S3_REGION_NAME", "us-east-1")
+        
+        presigned_url_str = ""
+        s3_url = ""
+        
+        timestamp = None
+        if raw_timestamp:
+            parsed = parse_datetime(str(raw_timestamp))
+            if parsed:
+                if timezone.is_naive(parsed):
+                    timestamp = timezone.make_aware(parsed, timezone.get_current_timezone())
+                else:
+                    timestamp = parsed
+        if not timestamp:
+            timestamp = timezone.now()
+            
+        if bucket_name:
+            try:
+                if aws_access_key and aws_secret_key:
+                    s3_client = boto3.client(
+                        "s3",
+                        aws_access_key_id=aws_access_key,
+                        aws_secret_key=aws_secret_key,
+                        region_name=aws_region,
+                        config=boto3.session.Config(signature_version="s3v4")
+                    )
+                else:
+                    s3_client = boto3.client(
+                        "s3",
+                        region_name=aws_region,
+                        config=boto3.session.Config(signature_version="s3v4")
+                    )
+                
+                presigned_url_str = s3_client.generate_presigned_url(
+                    ClientMethod="put_object",
+                    Params={
+                        "Bucket": bucket_name,
+                        "Key": s3_key,
+                        "ContentType": "video/mp4",
+                    },
+                    ExpiresIn=3600,
+                )
+                s3_url = f"https://{bucket_name}.s3.amazonaws.com/{s3_key}"
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to generate pre-signed URL: {e}")
+                return JsonResponse({"detail": f"Error de S3: {e}"}, status=502)
+        else:
+            s3_url = request.build_absolute_uri(settings.MEDIA_URL + f"alerts/{s3_key}") if hasattr(settings, "MEDIA_URL") else f"/media/alerts/{s3_key}"
+            presigned_url_str = request.build_absolute_uri(f"/api/alerts/upload-fallback/?key={s3_key}")
+            
+        alert = SecurityAlert.objects.create(
+            timestamp=timestamp,
+            camera_id=camera_id,
+            risk_score=float(risk_score) if risk_score is not None else 0.75,
+            rules_triggered=rules_triggered if isinstance(rules_triggered, list) else [str(rules_triggered)],
+            video_path=s3_url,
+            zona=zona
+        )
+        
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                "security_alerts",
+                {
+                    "type": "alert_message",
+                    "alert": {
+                        "id": alert.id,
+                        "timestamp": alert.timestamp.isoformat(),
+                        "camera_id": alert.camera_id,
+                        "risk_score": alert.risk_score,
+                        "rules_triggered": alert.rules_triggered,
+                        "video_path": alert.video_path,
+                        "zona": alert.zona,
+                        "created_at": alert.created_at.isoformat() if alert.created_at else None,
+                    }
+                }
+            )
+            
+        return JsonResponse({
+            "status": "success",
+            "alert_id": alert.id,
+            "presigned_url": presigned_url_str,
+            "s3_url": s3_url
+        })
+
+    @action(detail=False, methods=["put"], url_path="upload-fallback", authentication_classes=(), permission_classes=())
+    def upload_fallback(self, request):
+        s3_key = request.query_params.get("key")
+        if not s3_key:
+            return HttpResponse("Missing key query parameter", status=400)
+            
+        from django.core.files.storage import default_storage
+        from django.core.files.base import ContentFile
+        
+        file_data = request.body
+        local_path = default_storage.save(f"alerts/{s3_key}", ContentFile(file_data))
+        return HttpResponse("Local upload success", status=200)
+
 class TelemetriaAfluenciaViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint that allows commercial telemetry to be viewed."""
     permission_classes = [IsAuthenticated]

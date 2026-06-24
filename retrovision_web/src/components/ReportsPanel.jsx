@@ -140,15 +140,90 @@ export default function ReportsPanel({ token, selectedTenantId, selectedStoreId,
     }
   };
 
+  const [viewMode, setViewMode] = useState('historical'); // 'historical' or 'predictive'
+  const [predictiveCameraId, setPredictiveCameraId] = useState('camara_local');
+  const [predictiveData, setPredictiveData] = useState(null);
+  const [predictiveLoading, setPredictiveLoading] = useState(false);
+  const [predictiveError, setPredictiveError] = useState(null);
+
+  const fetchPredictiveData = async () => {
+    if (!token) return;
+    setPredictiveLoading(true);
+    setPredictiveError(null);
+    try {
+      let activeCam = predictiveCameraId;
+      if (!activeCam || activeCam === 'ALL') {
+        activeCam = 'camara_local';
+      }
+      const response = await axios.get(`${API_BASE_URL}/api/telemetry/predictive/?camera_id=${activeCam}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setPredictiveData(response.data.predictions);
+    } catch (err) {
+      console.error("Error fetching predictions:", err);
+      setPredictiveError(err.response?.data?.error || "No se pudieron cargar las predicciones de Machine Learning. Asegúrate de que los modelos estén entrenados en el servidor.");
+    } finally {
+      setPredictiveLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchHistoricalData();
   }, [token, timeRange, selectedTenantId, selectedStoreId, selectedCameraId]);
 
-  if (loading && !data) {
+  useEffect(() => {
+    if (viewMode === 'predictive') {
+      fetchPredictiveData();
+    }
+  }, [token, viewMode, predictiveCameraId]);
+
+
+  const renderHeader = () => (
+    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[#0f1524]/60 border border-gray-800 p-5 rounded-2xl relative overflow-hidden">
+      <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-purple-500 to-cyan-500" />
+      <div>
+        <h2 className="text-lg font-black text-white uppercase tracking-wider flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-cyan-400" />
+          Módulo de Reportes & Analítica
+        </h2>
+        <p className="text-xs text-gray-400">Analiza datos históricos del negocio y consulta predicciones inteligentes con ML.</p>
+      </div>
+      
+      <div className="inline-flex rounded-xl border border-gray-800 bg-[#0a0f1d] p-1 shrink-0 self-stretch md:self-auto justify-center">
+        <button
+          onClick={() => setViewMode('historical')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+            viewMode === 'historical'
+              ? 'bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-500/50 text-white font-extrabold shadow-lg shadow-cyan-500/5'
+              : 'border border-transparent text-gray-400 hover:text-white bg-transparent'
+          }`}
+        >
+          <Calendar className="w-4 h-4 text-cyan-400" />
+          Histórico
+        </button>
+        <button
+          onClick={() => setViewMode('predictive')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+            viewMode === 'predictive'
+              ? 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/50 text-white font-extrabold shadow-lg shadow-purple-500/5'
+              : 'border border-transparent text-gray-400 hover:text-white bg-transparent'
+          }`}
+        >
+          <Brain className="w-4 h-4 text-purple-400 animate-pulse" />
+          🔮 Predictivo (ML)
+        </button>
+      </div>
+    </div>
+  );
+
+  if (loading && !data && viewMode === 'historical') {
     return (
-      <div className="flex flex-col items-center justify-center p-12 min-h-[400px]">
-        <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mb-4" />
-        <p className="text-xs text-gray-400">Compilando datos históricos de la tienda...</p>
+      <div className="flex flex-col gap-6 animate-fade-in">
+        {renderHeader()}
+        <div className="flex flex-col items-center justify-center p-12 bg-[#0f1524]/60 border border-gray-800 rounded-2xl min-h-[400px]">
+          <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mb-4" />
+          <p className="text-xs text-gray-400">Compilando datos históricos de la tienda...</p>
+        </div>
       </div>
     );
   }
@@ -194,8 +269,311 @@ export default function ReportsPanel({ token, selectedTenantId, selectedStoreId,
       })).sort((a, b) => b.value - a.value)
     : [];
 
+  if (viewMode === 'predictive') {
+    // Calculate summary metrics from predictions
+    let peakInflowHour = 'N/A';
+    let maxPredictedInflow = 0;
+    let peakWaitHour = 'N/A';
+    let maxPredictedWait = 0;
+    let maxQueueLen = 0;
+    let maxRiskProb = 0;
+    let riskHour = 'N/A';
+    
+    if (predictiveData && predictiveData.length > 0) {
+      predictiveData.forEach(item => {
+        if (item.predicted_inflow > maxPredictedInflow) {
+          maxPredictedInflow = item.predicted_inflow;
+          peakInflowHour = item.hour;
+        }
+        if (item.predicted_wait_seconds > maxPredictedWait) {
+          maxPredictedWait = item.predicted_wait_seconds;
+          peakWaitHour = item.hour;
+          maxQueueLen = item.predicted_queue;
+        }
+        if (item.alert_probability > maxRiskProb) {
+          maxRiskProb = item.alert_probability;
+          riskHour = item.hour;
+        }
+      });
+    }
+
+    const get15MinsPrior = (timeStr) => {
+      if (!timeStr || timeStr === 'N/A') return '15 minutos antes';
+      const [hStr, mStr] = timeStr.split(':');
+      let hr = parseInt(hStr);
+      let min = parseInt(mStr);
+      min -= 15;
+      if (min < 0) {
+        min += 60;
+        hr -= 1;
+        if (hr < 0) hr += 24;
+      }
+      return `${String(hr).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    };
+    const actionTime = get15MinsPrior(peakWaitHour);
+
+    // Formulate recommendations
+    const recommendations = [];
+    if (maxPredictedWait >= 30.0 || maxQueueLen >= 2) {
+      recommendations.push({
+        type: 'queue',
+        icon: <Clock className="w-4 h-4 text-amber-400" />,
+        text: `[Reventamiento de Colas] Abrir caja auxiliar a las ${actionTime} para mitigar la congestión proyectada de ${maxQueueLen} personas en cola a las ${peakWaitHour}.`
+      });
+    }
+    if (maxPredictedInflow >= 10.0) {
+      const zoneName = predictiveCameraId === 'camara_entrada' ? 'Acceso Principal' : 
+                       predictiveCameraId === 'camara_carnes' ? 'Fiambrería y Carnes' : 
+                       predictiveCameraId === 'camara_lacteos' ? 'Lácteos y Bebidas' : 'Salón Principal';
+      recommendations.push({
+        type: 'staff',
+        icon: <Users className="w-4 h-4 text-cyan-400" />,
+        text: `[Distribución de Personal] Reforzar personal de atención y góndola en la zona de ${zoneName} cerca de las ${peakInflowHour} para asimilar el flujo máximo proyectado de ${maxPredictedInflow.toFixed(1)} shoppers/hora.`
+      });
+    }
+    if (maxRiskProb >= 0.50) {
+      recommendations.push({
+        type: 'security',
+        icon: <AlertTriangle className="w-4 h-4 text-red-400 animate-pulse" />,
+        text: `[Seguridad Proactiva] Incrementar rondas de guardias en el sector a las ${riskHour} debido a probabilidad elevada de alerta/anomalía (${Math.round(maxRiskProb * 100)}%).`
+      });
+    }
+    if (recommendations.length === 0) {
+      recommendations.push({
+        type: 'normal',
+        icon: <Users className="w-4 h-4 text-emerald-400" />,
+        text: "[Operación Normal] Flujos estables proyectados para las próximas 12 horas. Se sugiere mantener operación estándar."
+      });
+    }
+
+    return (
+      <div className="flex flex-col gap-6 animate-fade-in">
+        {renderHeader()}
+        
+        {/* Predictor Selector bar */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[#0f1524]/60 border border-gray-800 p-4 rounded-xl">
+          <div className="flex items-center gap-2">
+            <Brain className="w-5 h-5 text-purple-400 animate-pulse" />
+            <div>
+              <h4 className="text-sm font-bold text-white uppercase tracking-wider">Pronóstico de Operaciones (Siguientes 12 Horas)</h4>
+              <p className="text-[10px] text-gray-500 font-mono">
+                Modelo: <span className="text-purple-400 font-bold">RandomForestRegressor / Classifier Autoregresivo</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="flex flex-col gap-0.5 w-full sm:w-auto">
+              <span className="text-[9px] font-bold text-gray-500 uppercase">Sector / Área a Analizar</span>
+              <select
+                value={predictiveCameraId}
+                onChange={(e) => setPredictiveCameraId(e.target.value)}
+                disabled={predictiveLoading}
+                className="bg-[#0a0f1d] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500/50 cursor-pointer font-bold w-full sm:w-48"
+              >
+                <option value="camara_entrada">Acceso Principal</option>
+                <option value="camara_local">Salón Principal & Cajas</option>
+                <option value="camara_carnes">Fiambrería y Carnes</option>
+                <option value="camara_lacteos">Lácteos y Bebidas</option>
+              </select>
+            </div>
+            <button
+              onClick={fetchPredictiveData}
+              disabled={predictiveLoading}
+              className="flex items-center gap-1.5 px-3 py-2 bg-gray-800/80 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-medium transition-colors cursor-pointer self-end"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${predictiveLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {predictiveError && (
+          <div className="p-4 bg-red-950/20 border border-red-900/40 text-red-400 text-xs rounded-xl flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+              <span className="font-bold">Error en predicción</span>
+            </div>
+            <p>{predictiveError}</p>
+          </div>
+        )}
+
+        {predictiveLoading && !predictiveData && (
+          <div className="flex flex-col items-center justify-center p-12 bg-[#0f1524]/40 border border-gray-800 rounded-xl min-h-[300px]">
+            <RefreshCw className="w-6 h-6 text-purple-400 animate-spin mb-3" />
+            <p className="text-xs text-gray-400">Calculando modelos predictivos...</p>
+          </div>
+        )}
+
+        {predictiveData && (
+          <>
+            {/* Predictive KPIs and Recommendations */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Executive metrics (5 cols) */}
+              <div className="lg:col-span-5 grid grid-cols-1 gap-4">
+                <div className="bg-[#0f1524]/60 border border-gray-800 rounded-xl p-4 relative overflow-hidden flex items-center justify-between">
+                  <div className="absolute top-0 left-0 w-1.5 h-full bg-purple-500" />
+                  <div>
+                    <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Afluencia Máxima Proyectada</p>
+                    <h3 className="text-2xl font-black text-white mt-1 font-mono">{maxPredictedInflow.toFixed(1)} <span className="text-xs font-normal text-gray-400">vis./h</span></h3>
+                    <span className="text-[9px] text-gray-500">Pico estimado a las {peakInflowHour}</span>
+                  </div>
+                  <div className="p-3 bg-purple-950/20 border border-purple-500/20 rounded-lg text-purple-400">
+                    <Users className="w-6 h-6" />
+                  </div>
+                </div>
+
+                <div className="bg-[#0f1524]/60 border border-gray-800 rounded-xl p-4 relative overflow-hidden flex items-center justify-between">
+                  <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-500" />
+                  <div>
+                    <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">Máxima Espera Proyectada</p>
+                    <h3 className="text-2xl font-black text-white mt-1 font-mono">{maxPredictedWait.toFixed(0)}s</h3>
+                    <span className="text-[9px] text-gray-500">Pico de {maxQueueLen} personas a las {peakWaitHour}</span>
+                  </div>
+                  <div className="p-3 bg-amber-950/20 border border-amber-500/20 rounded-lg text-amber-400">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                </div>
+
+                <div className="bg-[#0f1524]/60 border border-gray-800 rounded-xl p-4 relative overflow-hidden flex items-center justify-between">
+                  <div className="absolute top-0 left-0 w-1.5 h-full bg-rose-500" />
+                  <div>
+                    <p className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">Riesgo Máximo de Anomalías</p>
+                    <h3 className="text-2xl font-black text-white mt-1 font-mono">{Math.round(maxRiskProb * 100)}%</h3>
+                    <span className="text-[9px] text-gray-500">Mayor vulnerabilidad a las {riskHour}</span>
+                  </div>
+                  <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-lg text-rose-400">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Proactive Recommendations Panel (7 cols) */}
+              <div className="lg:col-span-7 bg-[#0f1524]/80 border border-gray-800 p-5 rounded-2xl flex flex-col gap-4 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/5 blur-[80px] rounded-full pointer-events-none" />
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-purple-400" />
+                  Plan de Acción Proactivo Recomendado (ML)
+                </h4>
+                <p className="text-[10px] text-gray-400 font-semibold">Basado en el análisis predictivo de las variables de tráfico, colas y alertas de seguridad para las siguientes 12 horas.</p>
+
+                <div className="flex flex-col gap-3 mt-1">
+                  {recommendations.map((rec, idx) => (
+                    <div key={idx} className="flex gap-3 items-start p-3 rounded-xl bg-[#0a0f1d]/60 border border-gray-800 hover:border-gray-700 transition-colors">
+                      <div className="p-1.5 rounded-lg bg-gray-900 border border-gray-800 shrink-0">
+                        {rec.icon}
+                      </div>
+                      <span className="text-xs text-gray-300 leading-relaxed font-mono">{rec.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Predictive Charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Traffic inflow forecast (6 cols) */}
+              <div className="lg:col-span-6 bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-purple-400" />
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Afluencia Proyectada (Siguientes 12h)</h4>
+                </div>
+
+                <div className="h-[240px] w-full text-[10px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={predictiveData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorPredInflow" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#a855f7" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="#a855f7" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1f2937/40" vertical={false} />
+                      <XAxis dataKey="hour" stroke="#6b7280" />
+                      <YAxis stroke="#6b7280" />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#0a0f1d', border: '1px solid #374151', borderRadius: '8px' }}
+                        labelStyle={{ color: '#9ca3af', fontWeight: 'bold' }}
+                      />
+                      <Area type="monotone" dataKey="predicted_inflow" name="Ingresos Proyectados" stroke="#a855f7" strokeWidth={2.5} fillOpacity={1} fill="url(#colorPredInflow)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Wait time forecast (6 cols) */}
+              <div className="lg:col-span-6 bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Espera Promedio en Cajas Proyectada (Siguientes 12h)</h4>
+                </div>
+
+                <div className="h-[240px] w-full text-[10px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={predictiveData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1f2937/40" vertical={false} />
+                      <XAxis dataKey="hour" stroke="#6b7280" />
+                      <YAxis stroke="#6b7280" />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#0a0f1d', border: '1px solid #374151', borderRadius: '8px' }}
+                        labelStyle={{ color: '#9ca3af', fontWeight: 'bold' }}
+                      />
+                      <Bar dataKey="predicted_wait_seconds" name="Espera Estimada (seg)">
+                        {predictiveData.map((entry, index) => {
+                          const val = entry.predicted_wait_seconds;
+                          const color = val >= 45 ? '#ef4444' : val >= 20 ? '#f59e0b' : '#10b981';
+                          return <Cell key={`cell-${index}`} fill={color} />;
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Risk probability forecast (full width) */}
+            <div className="bg-[#0f1524]/80 border border-gray-800 p-4 rounded-2xl flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 animate-pulse" />
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider m-0">Probabilidad Proyectada de Anomalía/Amenaza de Seguridad (Siguientes 12h)</h4>
+              </div>
+
+              <div className="h-[200px] w-full text-[10px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart 
+                    data={predictiveData.map(d => ({ ...d, alert_prob_percent: Math.round(d.alert_probability * 100) }))} 
+                    margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient id="colorPredRisk" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937/40" vertical={false} />
+                    <XAxis dataKey="hour" stroke="#6b7280" />
+                    <YAxis stroke="#6b7280" unit="%" domain={[0, 100]} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#0a0f1d', border: '1px solid #374151', borderRadius: '8px' }}
+                      labelStyle={{ color: '#9ca3af', fontWeight: 'bold' }}
+                    />
+                    <Area type="monotone" dataKey="alert_prob_percent" name="Probabilidad de Anomalía" stroke="#f43f5e" strokeWidth={2.5} fillOpacity={1} fill="url(#colorPredRisk)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 animate-fade-in">
+      {renderHeader()}
+
       
       {/* AI Dynamic Reports Section */}
       <div className="bg-[#0f1524]/80 border border-gray-800 rounded-2xl p-5 flex flex-col gap-4 relative overflow-hidden">

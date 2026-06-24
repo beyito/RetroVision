@@ -27,6 +27,7 @@ build/
 *.pt
 *.onnx
 *.weights
+*.joblib
 
 # 6. Evidencia de Video (No subir grabaciones locales)
 alerts/

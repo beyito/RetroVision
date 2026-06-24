@@ -14,6 +14,10 @@ hiredis==3.0.0
 reportlab>=4.1.0
 openpyxl>=3.1.0
 requests
+numpy>=1.22.0
+pandas>=1.4.0
+scikit-learn>=1.0.0
+
 
 
 

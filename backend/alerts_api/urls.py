@@ -9,6 +9,7 @@ from .views import (
     TelemetriaAfluenciaViewSet,
     HeatmapsViewSet,
     DynamicReportView,
+    PredictiveAnalysisView,
 )
 
 router = DefaultRouter()
@@ -21,7 +22,10 @@ router.register(r'telemetry', TelemetriaAfluenciaViewSet, basename='telemetry')
 router.register(r'heatmaps', HeatmapsViewSet, basename='heatmap')
 
 urlpatterns = [
+    path('telemetry/predictive/', PredictiveAnalysisView.as_view(), name='telemetry-predictive'),
     path('', include(router.urls)),
     path('reports/dynamic/', DynamicReportView.as_view(), name='dynamic-report'),
 ]
+
+
 

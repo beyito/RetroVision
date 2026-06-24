@@ -160,3 +160,27 @@ class RetroVisionApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertIn("error", response.json())
 
+    def test_predictive_analysis_endpoint(self):
+        """Test the predictive analysis endpoint returns correct data structure."""
+        url = reverse("telemetry-predictive")
+        self.client.force_authenticate(user=self.admin_empresa_a)
+        
+        # Call GET
+        response = self.client.get(url, {"camera_id": "cam-a1"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["camera_id"], "cam-a1")
+        self.assertIn("predictions", data)
+        self.assertEqual(len(data["predictions"]), 12)
+        
+        # Verify prediction keys
+        pred = data["predictions"][0]
+        self.assertIn("timestamp", pred)
+        self.assertIn("hour", pred)
+        self.assertIn("predicted_inflow", pred)
+        self.assertIn("predicted_wait_seconds", pred)
+        self.assertIn("predicted_queue", pred)
+        self.assertIn("alert_probability", pred)
+
+

@@ -912,3 +912,191 @@ class DynamicReportView(APIView):
         except Exception as e:
             return Response({"error": f"Error del servicio de reportes: {str(e)}"}, status=500)
 
+
+class PredictiveAnalysisView(APIView):
+    """
+    API view to generate predictive retail and security analysis for the next 12 hours.
+    Loads trained RandomForest models to run multi-step autoregressive time-series forecasts.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        camera_id = request.query_params.get("camera_id") or "camara_local"
+        
+        # 1. Load models and metadata
+        scratch_path = os.path.join(settings.BASE_DIR, "scratch")
+        model_inflow_path = os.path.join(scratch_path, "model_inflow.joblib")
+        model_wait_path = os.path.join(scratch_path, "model_wait.joblib")
+        model_alert_path = os.path.join(scratch_path, "model_alert.joblib")
+        metadata_path = os.path.join(scratch_path, "model_metadata.json")
+        
+        if not (os.path.exists(model_inflow_path) and os.path.exists(model_wait_path) and os.path.exists(metadata_path)):
+            return Response({
+                "error": "Los modelos predictivos aún no están entrenados. "
+                         "Por favor, ejecuta el pipeline en el servidor: "
+                         "python scratch/train_forecasting_models.py"
+            }, status=400)
+            
+        try:
+            import joblib
+            model_inflow = joblib.load(model_inflow_path)
+            model_wait = joblib.load(model_wait_path)
+            model_alert = joblib.load(model_alert_path)
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+        except Exception as e:
+            return Response({"error": f"Error al cargar modelos de Machine Learning: {str(e)}"}, status=500)
+            
+        features = metadata["features"]
+        cam_dummy_cols = metadata["cam_cols"]
+        
+        # 2. Get last 30 hours of telemetry for this camera for lags
+        from django.utils import timezone
+        from datetime import timedelta
+        import numpy as np
+        now = timezone.now()
+        start_time = now - timedelta(hours=36)
+        
+        telemetry_qs = Telemetria_Afluencia.objects.filter(
+            camera_id=camera_id,
+            timestamp__gte=start_time,
+            timestamp__lte=now
+        ).order_by('timestamp')
+        
+        telemetry_by_hour = {}
+        for t in telemetry_qs:
+            hour_dt = t.timestamp.replace(minute=0, second=0, microsecond=0)
+            if hour_dt not in telemetry_by_hour:
+                telemetry_by_hour[hour_dt] = []
+            telemetry_by_hour[hour_dt].append(t)
+            
+        history_list = []
+        for i in range(30, -1, -1):
+            h_dt = (now - timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+            
+            matching_records = []
+            for k, val in telemetry_by_hour.items():
+                if k.replace(tzinfo=None) == h_dt.replace(tzinfo=None):
+                    matching_records = val
+                    break
+                    
+            if matching_records:
+                history_list.append({
+                    "timestamp": h_dt,
+                    "visitor_inflow": sum(r.personas_entrantes for r in matching_records),
+                    "avg_wait_time_seconds": np.mean([r.tiempo_espera_promedio for r in matching_records]),
+                    "personas_en_cola": int(np.mean([r.personas_en_cola for r in matching_records]))
+                })
+            else:
+                h = h_dt.hour
+                d = h_dt.weekday()
+                is_weekend = 1 if d >= 5 else 0
+                
+                # Baseline synthetic padding
+                base = 3.0
+                daily = 10.0 * np.exp(-((h - 13.0) / 2.0)**2) + 15.0 * np.exp(-((h - 19.0) / 2.0)**2)
+                if h < 8 or h > 21:
+                    daily = 0.1
+                    base = 0.1
+                inflow = max(0, int(round((base + daily) * (1.4 if is_weekend else 1.0))))
+                queue = max(0, int(inflow * 0.12))
+                wait = queue * 15.0
+                
+                history_list.append({
+                    "timestamp": h_dt,
+                    "visitor_inflow": inflow,
+                    "avg_wait_time_seconds": wait,
+                    "personas_en_cola": queue
+                })
+                
+        # 3. Autoregressive prediction loop for next 12 hours
+        predictions = []
+        holidays = [(1, 1), (1, 22), (5, 1), (6, 21), (8, 6), (11, 2), (12, 25)]
+        
+        for step in range(1, 13):
+            future_dt = now + timedelta(hours=step)
+            future_dt_hour = future_dt.replace(minute=0, second=0, microsecond=0)
+            
+            h = future_dt.hour
+            d = future_dt.weekday()
+            m = future_dt.month
+            
+            is_weekend = 1 if d >= 5 else 0
+            is_holiday = 1 if (m, future_dt.day) in holidays else 0
+            is_promotion = 1 if (is_weekend and future_dt.day <= 7) else 0
+            
+            inflow_lag_1h = history_list[-1]["visitor_inflow"]
+            inflow_lag_2h = history_list[-2]["visitor_inflow"]
+            inflow_lag_24h = history_list[-24]["visitor_inflow"]
+            
+            inflow_rolling_mean_3h = np.mean([
+                history_list[-1]["visitor_inflow"],
+                history_list[-2]["visitor_inflow"],
+                history_list[-3]["visitor_inflow"]
+            ])
+            
+            wait_lag_1h = history_list[-1]["avg_wait_time_seconds"]
+            wait_lag_2h = history_list[-2]["avg_wait_time_seconds"]
+            wait_lag_24h = history_list[-24]["avg_wait_time_seconds"]
+            
+            queue_lag_1h = history_list[-1]["personas_en_cola"]
+            
+            cam_features = {}
+            for col in cam_dummy_cols:
+                target_cam = col[4:]
+                cam_features[col] = 1 if target_cam == camera_id else 0
+                
+            feature_vector = {
+                "hour": h,
+                "day_of_week": d,
+                "month": m,
+                "is_weekend": is_weekend,
+                "is_holiday": is_holiday,
+                "is_promotion": is_promotion,
+                "inflow_lag_1h": inflow_lag_1h,
+                "inflow_lag_2h": inflow_lag_2h,
+                "inflow_lag_24h": inflow_lag_24h,
+                "inflow_rolling_mean_3h": inflow_rolling_mean_3h,
+                "wait_lag_1h": wait_lag_1h,
+                "wait_lag_2h": wait_lag_2h,
+                "wait_lag_24h": wait_lag_24h,
+                "queue_lag_1h": queue_lag_1h
+            }
+            feature_vector.update(cam_features)
+            
+            features_ordered = [feature_vector[f] for f in features]
+            X = np.array([features_ordered])
+            
+            pred_inflow = max(0.0, float(model_inflow.predict(X)[0]))
+            pred_wait = max(0.0, float(model_wait.predict(X)[0]))
+            
+            try:
+                alert_prob = float(model_alert.predict_proba(X)[0][1])
+            except Exception:
+                alert_prob = 0.0
+                
+            pred_queue = max(0, int(round(pred_wait / 18.0)))
+            
+            history_list.append({
+                "timestamp": future_dt_hour,
+                "visitor_inflow": pred_inflow,
+                "avg_wait_time_seconds": pred_wait,
+                "personas_en_cola": pred_queue
+            })
+            
+            predictions.append({
+                "timestamp": future_dt_hour.isoformat(),
+                "hour": f"{h:02d}:00",
+                "predicted_inflow": round(pred_inflow, 1),
+                "predicted_wait_seconds": round(pred_wait, 1),
+                "predicted_queue": pred_queue,
+                "alert_probability": round(alert_prob, 3)
+            })
+            
+        return Response({
+            "status": "success",
+            "camera_id": camera_id,
+            "predictions": predictions
+        })
+
+

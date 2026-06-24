@@ -73,9 +73,7 @@ class CreateCheckoutSessionView(APIView):
                     }],
                     mode='payment',
                     client_reference_id=str(tenant.id),
-                    success_url=request.build_absolute_uri(
-                        f"/register/success?session_id={{CHECKOUT_SESSION_ID}}&tenant_id={tenant.id}&plan={plan_id}"
-                    ),
+                    success_url=request.build_absolute_uri("/register/success") + f"?session_id={{CHECKOUT_SESSION_ID}}&tenant_id={tenant.id}&plan={plan_id}",
                     cancel_url=request.build_absolute_uri("/"),
                 )
                 checkout_url = session.url
@@ -177,9 +175,7 @@ class UserRegistrationView(APIView):
                     }],
                     mode='payment',
                     client_reference_id=str(tenant.id),
-                    success_url=request.build_absolute_uri(
-                        f"/register/success?session_id={{CHECKOUT_SESSION_ID}}&tenant_id={tenant.id}&plan={data['plan']}"
-                    ),
+                    success_url=request.build_absolute_uri("/register/success") + f"?session_id={{CHECKOUT_SESSION_ID}}&tenant_id={tenant.id}&plan={data['plan']}",
                     cancel_url=request.build_absolute_uri("/register"),
                 )
                 checkout_url = session.url
@@ -223,8 +219,10 @@ class CheckoutCompleteView(APIView):
         card_expiry = request.data.get("card_expiry", "")
         card_cvc = request.data.get("card_cvc", "")
         
-        if not session_id:
-            return Response({"detail": "session_id es requerido."}, status=status.HTTP_400_BAD_REQUEST)
+        if not session_id or session_id in ("{CHECKOUT_SESSION_ID}", "%7BCHECKOUT_SESSION_ID%7D"):
+            return Response({
+                "detail": "El ID de sesión no es válido. Stripe no pudo procesar el pago correctamente porque la URL de éxito estaba codificada o el pago no se completó. Por favor, intente pagar de nuevo desde esta pantalla."
+            }, status=status.HTTP_400_BAD_REQUEST)
             
         # Obtener de cache o usar fallback si expira
         session_data = cache.get(f"stripe_session:{session_id}")

@@ -965,10 +965,13 @@ export default function App() {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [screen, setScreen] = useState(() => {
     if (window.location.pathname === '/stripe-checkout-mock') return 'checkout-mock';
+    if (window.location.pathname === '/register/success') return 'checkout-success';
     return 'login';
   });
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionError, setSessionError] = useState('');
+  const [successProcessing, setSuccessProcessing] = useState(false);
+  const [successError, setSuccessError] = useState('');
   const [auth, setAuth] = useState(() => {
     try {
       const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
@@ -1086,6 +1089,74 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (screen !== 'checkout-success') return;
+
+    const completeCheckout = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const sessionId = params.get('session_id') || '';
+      const tenantId = params.get('tenant_id') || '';
+      const plan = params.get('plan') || '';
+      
+      if (!sessionId) {
+        setSuccessError('No se encontró el ID de la sesión de pago.');
+        return;
+      }
+      
+      try {
+        await axios.post(`${API_BASE_URL}/api/accounts/checkout-complete/`, {
+          session_id: sessionId,
+          tenant_id: tenantId,
+          plan: plan
+        });
+        
+        setSuccessProcessing(true);
+        
+        // Try auto login using stored credentials
+        const rawCreds = window.sessionStorage.getItem('temp_reg_creds');
+        if (rawCreds) {
+          const creds = JSON.parse(rawCreds);
+          const loginRes = await axios.post(`${API_BASE_URL}/api/token/`, {
+            username: creds.username,
+            password: creds.password
+          });
+          window.sessionStorage.removeItem('temp_reg_creds');
+          
+          const authData = {
+            token: loginRes.data.access,
+            refresh: loginRes.data.refresh
+          };
+          setAuth(authData);
+          setProfile(null); // trigger profile reload
+          setScreen('login');
+          window.history.replaceState({}, document.title, '/');
+        } else {
+          // If no stored credentials, check if they are already logged in (paying from block screen)
+          const localAuth = window.localStorage.getItem('retrovision_auth');
+          if (localAuth) {
+            const authData = JSON.parse(localAuth);
+            if (authData && authData.token) {
+              setAuth(authData);
+              setProfile(null); // reload profile to update status to active
+              setScreen('login');
+              window.history.replaceState({}, document.title, '/');
+              return;
+            }
+          }
+          // Fallback: direct to login with success message
+          setAuthError('¡Pago completado con éxito! Por favor inicie sesión.');
+          setScreen('login');
+          window.history.replaceState({}, document.title, '/');
+        }
+      } catch (err) {
+        console.error(err);
+        setSuccessError(err.response?.data?.detail || err.message || 'Error al validar el pago con Stripe.');
+      }
+    };
+    
+    completeCheckout();
+  }, [screen]);
+
+  useEffect(() => {
     if (!auth.token || profile) return;
 
     const bootstrapProfile = async () => {
@@ -1162,6 +1233,47 @@ export default function App() {
           window.history.replaceState({}, document.title, '/');
         }}
       />
+    );
+  }
+
+  if (screen === 'checkout-success') {
+    return (
+      <div className="min-h-screen bg-[#07111e] text-white flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+        <div className="bg-[#0f1a30] border border-cyan-500/30 rounded-3xl p-8 max-w-md w-full shadow-2xl relative overflow-hidden flex flex-col items-center">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 to-emerald-500" />
+          
+          {successError ? (
+            <>
+              <AlertCircle className="w-16 h-16 text-red-400 mb-5 animate-bounce" />
+              <h2 className="text-2xl font-black mb-2 uppercase tracking-wide text-red-400">Error de Validación</h2>
+              <p className="text-sm text-slate-300 mb-6 leading-relaxed">
+                {successError}
+              </p>
+              <button
+                onClick={() => {
+                  setScreen('login');
+                  window.history.replaceState({}, document.title, '/');
+                }}
+                className="w-full rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 text-white px-4 py-3 text-xs font-black uppercase tracking-[0.15em] transition cursor-pointer"
+              >
+                Volver al Inicio
+              </button>
+            </>
+          ) : (
+            <>
+              <RefreshCw className="w-16 h-16 text-cyan-400 animate-spin mb-5" />
+              <h2 className="text-2xl font-black mb-2 uppercase tracking-wide">Confirmando Pago</h2>
+              <p className="text-sm text-slate-300 mb-6 leading-relaxed">
+                Estamos validando la transacción con Stripe. Esto tomará solo unos segundos.
+              </p>
+              <div className="flex items-center gap-2 text-xs text-slate-400 font-semibold uppercase animate-pulse">
+                <Lock className="w-3.5 h-3.5" />
+                Conexión segura SSL
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     );
   }
 

@@ -7,6 +7,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source='tenant.name', read_only=True)
     tenant_max_cameras = serializers.IntegerField(source='tenant.max_cameras', read_only=True)
     tenant_is_active = serializers.BooleanField(source='tenant.is_active', read_only=True)
+    tenant_subscription_status = serializers.CharField(source='tenant.subscription_status', read_only=True)
     store_name = serializers.CharField(source='store.name', read_only=True)
 
     class Meta:
@@ -22,6 +23,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'tenant_name',
             'tenant_max_cameras',
             'tenant_is_active',
+            'tenant_subscription_status',
             'store',
             'store_name',
             'is_staff',

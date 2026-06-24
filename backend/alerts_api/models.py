@@ -13,10 +13,22 @@ def generate_api_key() -> str:
 class Tenant(models.Model):
     """Customer company that owns one or more stores."""
 
+    SUBSCRIPTION_CHOICES = [
+        ('incomplete', 'Incompleta'),
+        ('active', 'Activa'),
+        ('past_due', 'Pago Vencido'),
+        ('canceled', 'Cancelada'),
+    ]
+
     name = models.CharField(max_length=128, unique=True)
     slug = models.SlugField(max_length=128, unique=True)
     max_cameras = models.PositiveIntegerField(default=5)
     api_key = models.CharField(max_length=128, unique=True, default=generate_api_key)
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=SUBSCRIPTION_CHOICES,
+        default='active'
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

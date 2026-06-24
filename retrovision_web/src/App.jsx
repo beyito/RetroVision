@@ -9,10 +9,15 @@ import {
   Shield,
   Store,
   Users,
+  CreditCard,
+  Lock,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 
 import CameraConfigurationPanel from './components/CameraConfigurationPanel';
 import RegisterScreen from './components/RegisterScreen';
+import StripeCheckoutMock from './components/StripeCheckoutMock';
 import Dashboard from './Dashboard';
 import { API_BASE_URL } from './config';
 
@@ -958,7 +963,12 @@ const processQueue = (error, token = null) => {
 
 export default function App() {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
-  const [screen, setScreen] = useState('login');
+  const [screen, setScreen] = useState(() => {
+    if (window.location.pathname === '/stripe-checkout-mock') return 'checkout-mock';
+    return 'login';
+  });
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionError, setSessionError] = useState('');
   const [auth, setAuth] = useState(() => {
     try {
       const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
@@ -1109,12 +1119,50 @@ export default function App() {
     }
   };
 
+  const handlePaySaaS = async () => {
+    setSessionLoading(true);
+    setSessionError('');
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/accounts/create-checkout-session/`, {}, {
+        headers: apiHeaders(auth.token)
+      });
+      const checkoutUrl = response.data.checkout_url;
+      if (checkoutUrl.startsWith('http')) {
+        window.location.href = checkoutUrl;
+      } else {
+        window.location.href = window.location.origin + checkoutUrl;
+      }
+    } catch (err) {
+      console.error(err);
+      setSessionError(extractApiError(err, 'No se pudo generar la sesión de pago. Intente más tarde.'));
+    } finally {
+      setSessionLoading(false);
+    }
+  };
+
   function handleLogout() {
     setAuth({ token: '', refresh: '' });
     setProfile(null);
     setActiveView('operations');
     setCredentials({ username: '', password: '' });
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  }
+
+  if (screen === 'checkout-mock') {
+    return (
+      <StripeCheckoutMock
+        onPaymentSuccess={(authData) => {
+          setAuth(authData);
+          setScreen('login');
+          setProfile(null); // Force profile reload to get the new active status
+          window.history.replaceState({}, document.title, '/');
+        }}
+        onCancel={() => {
+          setScreen('login');
+          window.history.replaceState({}, document.title, '/');
+        }}
+      />
+    );
   }
 
   if (!auth.token || !profile) {
@@ -1139,6 +1187,69 @@ export default function App() {
         error={authError}
         onRegisterClick={() => setScreen('register')}
       />
+    );
+  }
+
+  if (profile?.tenant_subscription_status !== 'active') {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(239,68,68,0.1),_transparent_35%),linear-gradient(180deg,#07111e_0%,#0b0f19_100%)] text-slate-100 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-[#0d1627]/90 border border-red-500/20 rounded-[32px] p-8 shadow-2xl relative overflow-hidden flex flex-col items-center text-center">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-amber-500" />
+          
+          <div className="bg-red-500/10 p-4 rounded-full border border-red-500/20 mb-6">
+            <Lock className="w-8 h-8 text-red-400 animate-pulse" />
+          </div>
+
+          <h2 className="text-2xl font-black text-white uppercase tracking-wide">Acceso Restringido</h2>
+          <p className="text-xs text-red-400 font-extrabold uppercase tracking-widest mt-1">Suscripción Inactiva</p>
+
+          <p className="text-sm text-slate-300 mt-4 leading-relaxed">
+            La suscripción para tu empresa <strong>{profile.tenant_name}</strong> se encuentra en estado <strong>{
+              profile.tenant_subscription_status === 'incomplete' ? 'Incompleta' :
+              profile.tenant_subscription_status === 'past_due' ? 'Pago Vencido' :
+              profile.tenant_subscription_status === 'canceled' ? 'Cancelada' : profile.tenant_subscription_status
+            }</strong>.
+          </p>
+
+          <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+            Los paneles operativos de monitoreo, cámaras y la administración están bloqueados hasta que se complete el pago de la licencia SaaS.
+          </p>
+
+          {sessionError && (
+            <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-200 w-full">
+              {sessionError}
+            </div>
+          )}
+
+          <div className="mt-8 w-full space-y-3">
+            <button
+              onClick={handlePaySaaS}
+              disabled={sessionLoading}
+              className="w-full rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 px-4 py-3.5 text-xs font-black uppercase tracking-[0.15em] transition disabled:opacity-60 cursor-pointer flex justify-center items-center gap-2"
+            >
+              {sessionLoading ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Cargando pasarela...
+                </>
+              ) : (
+                <>
+                  <CreditCard className="w-3.5 h-3.5" />
+                  Completar Pago en Stripe
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="w-full rounded-2xl border border-white/10 bg-white/5 text-white hover:bg-white/10 px-4 py-3 text-xs font-black uppercase tracking-[0.15em] transition flex justify-center items-center gap-2 cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              Cerrar Sesión
+            </button>
+          </div>
+        </div>
+      </div>
     );
   }
 

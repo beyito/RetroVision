@@ -78,18 +78,21 @@ export default function RegisterScreen({ onBackToLogin, onRegisterSuccess }) {
 
     try {
       const response = await axios.post(`${API_BASE_URL}/api/accounts/register/`, formData);
-      // Auto login after success
-      const loginResponse = await axios.post(`${API_BASE_URL}/api/token/`, {
+      
+      // Guardar credenciales temporalmente para el inicio de sesión automático después del pago
+      window.sessionStorage.setItem('temp_reg_creds', JSON.stringify({
         username: formData.username,
-        password: formData.password,
-      });
-      
-      const authData = {
-        token: loginResponse.data.access,
-        refresh: loginResponse.data.refresh,
-      };
-      
-      onRegisterSuccess(authData);
+        password: formData.password
+      }));
+
+      // Redirigir a la URL de Stripe Checkout (Real o Simulada)
+      const checkoutUrl = response.data.checkout_url;
+      if (checkoutUrl.startsWith('http')) {
+        window.location.href = checkoutUrl;
+      } else {
+        // Redirección local para el simulador de Stripe Checkout
+        window.location.href = window.location.origin + checkoutUrl;
+      }
     } catch (error) {
       console.error(error);
       const payload = error?.response?.data;

@@ -70,12 +70,17 @@ class EdgeControlMqttSubscriber:
         flags: Any,
         rc: int,
     ) -> None:
-        """Handle connection and subscribe to the request topic."""
+        """Handle connection and subscribe to topics."""
         self._connected = rc == 0
         if self._connected:
-            topic = f"retrovision/edge/{self.edge_node_id}/snapshot/request"
-            client.subscribe(topic, qos=1)
-            self.logger.info("EdgeControlMqttSubscriber conectado. Suscrito a topic: %s", topic)
+            snapshot_topic = f"retrovision/edge/{self.edge_node_id}/snapshot/request"
+            config_topic = f"retrovision/edge/{self.edge_node_id}/config/update"
+            client.subscribe([(snapshot_topic, 1), (config_topic, 1)])
+            self.logger.info(
+                "EdgeControlMqttSubscriber conectado. Suscrito a topics: %s y %s",
+                snapshot_topic,
+                config_topic,
+            )
         else:
             self.logger.warning("Fallo en la conexión del suscriptor de control rc=%s", rc)
 
@@ -85,9 +90,29 @@ class EdgeControlMqttSubscriber:
             self.logger.warning("Suscriptor MQTT de control desconectado inesperadamente rc=%s", rc)
 
     def _on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
-        """Handle incoming snapshot requests."""
+        """Handle incoming snapshot or configuration reload requests."""
         try:
+            topic = msg.topic
             payload = json.loads(msg.payload.decode("utf-8"))
+
+            if "config/update" in topic:
+                camera_id = payload.get("camera_id")
+                if not camera_id:
+                    self.logger.warning("Mensaje de recarga de configuración recibido sin camera_id.")
+                    return
+                self.logger.info("Mensaje de recarga de configuración recibido para la cámara: %s", camera_id)
+                if hasattr(self.runner, "reload_camera"):
+                    t = threading.Thread(
+                        target=self.runner.reload_camera,
+                        args=(camera_id, payload),
+                        daemon=True
+                    )
+                    t.start()
+                else:
+                    self.logger.warning("El runner no tiene el método 'reload_camera' disponible.")
+                return
+
+            # Snapshot request logic
             camera_id = payload.get("camera_id")
             correlation_id = payload.get("correlation_id")
 

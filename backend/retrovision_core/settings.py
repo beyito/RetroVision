@@ -144,3 +144,25 @@ AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
 AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", "us-east-1")
 AWS_S3_SIGNATURE_VERSION = "s3v4"
 
+# Override settings during tests (must be at the very bottom to avoid overrides)
+import sys
+if 'test' in sys.argv:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "unique-snowflake",
+        }
+    }
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
+    AWS_STORAGE_BUCKET_NAME = None
+

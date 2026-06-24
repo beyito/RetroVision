@@ -150,6 +150,17 @@ class ObjectDetector:
         self.model_name = model_name
         self.confidence_threshold = confidence_threshold
         self.device = device
+        
+        # Auto-detect CUDA hardware acceleration if device is CPU but CUDA is available
+        if self.device == "cpu":
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    self.logger.info("CUDA GPU detectado. Activando aceleración por hardware para inferencia local de YOLOv8.")
+                    self.device = "cuda"
+            except ImportError:
+                pass
+
         self._model = None
         self._base_model = None
         

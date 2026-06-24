@@ -251,19 +251,48 @@ class CameraViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         user = self.request.user
         if isinstance(user, EdgeNode):
-            serializer.save(store=user.store, edge_node=user)
-            return
-        if is_admin_empresa(user) and getattr(user, "tenant_id", None):
+            instance = serializer.save(store=user.store, edge_node=user)
+        elif is_admin_empresa(user) and getattr(user, "tenant_id", None):
             allowed_store = Store.objects.filter(
                 id=self.request.data.get("store", serializer.instance.store_id),
                 tenant_id=user.tenant_id,
             ).first()
-            serializer.save(
+            instance = serializer.save(
                 store=allowed_store,
                 edge_node=serializer.validated_data.get("edge_node", serializer.instance.edge_node),
             )
-            return
-        serializer.save()
+        else:
+            instance = serializer.save()
+
+        # Broadcast camera configuration hot-reload command to Edge
+        if instance.edge_node:
+            config_payload = {
+                "camera_id": instance.camera_id,
+                "video_source": instance.video_source,
+                "roi_polygon": instance.roi_polygon,
+                "queue_roi_polygon": instance.queue_roi_polygon,
+                "queue_wait_threshold": instance.queue_wait_threshold,
+                "queue_dwell_seconds": instance.queue_dwell_seconds,
+                "queue_alert_people_threshold": instance.queue_alert_people_threshold,
+                "queue_alert_duration_seconds": instance.queue_alert_duration_seconds,
+                "max_allowed_wait_seconds": instance.max_allowed_wait_seconds,
+                "cashier_count": instance.cashier_count,
+                "service_rate_per_cashier_per_minute": instance.service_rate_per_cashier_per_minute,
+                "counting_line": instance.counting_line,
+                "counting_line_direction": instance.counting_line_direction,
+                "custom_zones": instance.custom_zones,
+            }
+            try:
+                mqtt_publish.single(
+                    f"retrovision/edge/{instance.edge_node.node_id}/config/update",
+                    payload=json.dumps(config_payload),
+                    qos=1,
+                    hostname=settings.MQTT_BROKER_HOST,
+                    port=settings.MQTT_BROKER_PORT,
+                )
+            except Exception as e:
+                # Do not block HTTP response if MQTT fails
+                pass
 
     @action(detail=True, methods=["get"], url_path="snapshot")
     def snapshot(self, request, camera_id=None):

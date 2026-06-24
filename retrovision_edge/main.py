@@ -130,26 +130,6 @@ class EdgeServiceRunner:
 
             if sync_enabled and remote_cameras:
                 self.logger.info("Iniciando en MODO MULTI-CÁMARA ONLINE...")
-                
-                # Función que procesa los frames de una cámara en su propio hilo
-                def camera_thread_loop(pipeline, camera_id, video_src):
-                    self.logger.info("Hilo iniciado para cámara: %s (origen: %s)", camera_id, video_src)
-                    pipeline.start()
-                    frame_count = 0
-                    try:
-                        while pipeline.is_running():
-                            success, frame, metadata, detection_result = pipeline.process_frame()
-                            if not success or frame is None:
-                                time.sleep(0.03)  # Evitar saturación en caso de desconexión temporal
-                                continue
-                            frame_count += 1
-                            if frame_count % 300 == 0:
-                                self.logger.info("[%s] Frame %s procesado correctamente.", camera_id, metadata.frame_number)
-                    except Exception as e:
-                        self.logger.error("Error en hilo de cámara %s: %s", camera_id, e, exc_info=True)
-                    finally:
-                        pipeline.release()
-                        self.logger.info("Hilo de cámara %s detenido.", camera_id)
 
                 # Iniciar hilos para cada cámara
                 for cam in remote_cameras:
@@ -203,7 +183,7 @@ class EdgeServiceRunner:
                         edge_api_key=edge_api_key,
                     )
                     
-                    t = threading.Thread(target=camera_thread_loop, args=(pipeline, cam_id, video_src), daemon=True)
+                    t = threading.Thread(target=self._camera_thread_loop, args=(pipeline, cam_id, video_src), daemon=True)
                     t.start()
                     self.active_pipelines[cam_id] = {"pipeline": pipeline, "thread": t}
 
@@ -334,6 +314,112 @@ class EdgeServiceRunner:
             sys.exit(1)
         finally:
             self._cleanup()
+
+    def _camera_thread_loop(self, pipeline: DetectionPipeline, camera_id: str, video_src: Any) -> None:
+        self.logger.info("Hilo iniciado para cámara: %s (origen: %s)", camera_id, video_src)
+        pipeline.start()
+        frame_count = 0
+        try:
+            while pipeline.is_running():
+                success, frame, metadata, detection_result = pipeline.process_frame()
+                if not success or frame is None:
+                    time.sleep(0.03)  # Evitar saturación en caso de desconexión temporal
+                    continue
+                frame_count += 1
+                if frame_count % 300 == 0:
+                    self.logger.info("[%s] Frame %s procesado correctamente.", camera_id, metadata.frame_number)
+        except Exception as e:
+            self.logger.error("Error en hilo de cámara %s: %s", camera_id, e, exc_info=True)
+        finally:
+            pipeline.release()
+            self.logger.info("Hilo de cámara %s detenido.", camera_id)
+
+    def reload_camera(self, camera_id: str, new_config: dict) -> None:
+        """Detiene y reinicia dinámicamente el pipeline de una cámara específica."""
+        self.logger.info("Recibida solicitud de recarga para cámara: %s", camera_id)
+        
+        # 1. Si la cámara ya está corriendo en MODO MULTI-CÁMARA, detenerla
+        if hasattr(self, "active_pipelines") and camera_id in self.active_pipelines:
+            self.logger.info("Deteniendo pipeline actual de la cámara: %s", camera_id)
+            old_item = self.active_pipelines[camera_id]
+            old_pipeline = old_item["pipeline"]
+            old_pipeline.stop()  # Detiene el bucle en process_frame()
+            old_item["thread"].join(timeout=3.0)  # Esperar a que el hilo termine
+            
+        # 2. Si estamos en MODO LOCAL (Single-Camera) y la cámara coincide, detenerla
+        elif self.pipeline and self.pipeline.camera_id == camera_id:
+            self.logger.info("Deteniendo pipeline actual en modo local de la cámara: %s", camera_id)
+            self.pipeline.stop()
+            self.pipeline.release()
+            self.pipeline = None
+
+        # 3. Inicializar el nuevo pipeline con la configuración recibida
+        video_src = new_config.get("video_source")
+        try:
+            video_src = int(video_src)
+        except (ValueError, TypeError):
+            pass
+
+        roi_polygon = new_config.get("roi_polygon") or self.config.mqtt.roi_polygon
+        queue_roi_polygon = new_config.get("queue_roi_polygon") or roi_polygon
+        counting_line = new_config.get("counting_line") or []
+        counting_line_direction = new_config.get("counting_line_direction") or "forward"
+        custom_zones = new_config.get("custom_zones") or []
+
+        self.logger.info("Re-inicializando pipeline para %s (source: %s)...", camera_id, video_src)
+        pipeline = DetectionPipeline(
+            camera_index=0,
+            video_source=video_src,
+            frame_width=self.config.video.frame_width,
+            frame_height=self.config.video.frame_height,
+            target_fps=self.config.video.fps,
+            model_name=self.config.video.model_name,
+            confidence_threshold=0.5,
+            draw_detections=True,
+            mqtt_enabled=self.config.mqtt.enabled,
+            mqtt_broker_host=self.config.mqtt.broker_host,
+            mqtt_broker_port=self.config.mqtt.broker_port,
+            mqtt_client_id=f"{self.config.mqtt.client_id}-{camera_id}",
+            mqtt_topic=self.config.mqtt.topic,
+            mqtt_telemetry_topic=self.config.mqtt.telemetry_topic,
+            roi_polygon=roi_polygon,
+            queue_wait_threshold=new_config.get("queue_wait_threshold", self.config.mqtt.queue_wait_threshold),
+            queue_roi_polygon=queue_roi_polygon,
+            queue_dwell_seconds=new_config.get("queue_dwell_seconds", self.config.mqtt.queue_dwell_seconds),
+            queue_alert_people_threshold=new_config.get("queue_alert_people_threshold", self.config.mqtt.queue_alert_people_threshold),
+            queue_alert_duration_seconds=new_config.get("queue_alert_duration_seconds", self.config.mqtt.queue_alert_duration_seconds),
+            max_allowed_wait_seconds=new_config.get("max_allowed_wait_seconds", self.config.mqtt.max_allowed_wait_seconds),
+            cashier_count=new_config.get("cashier_count", self.config.mqtt.cashier_count),
+            service_rate_per_cashier_per_minute=new_config.get("service_rate_per_cashier_per_minute", self.config.mqtt.service_rate_per_cashier_per_minute),
+            mqtt_keep_alive=self.config.mqtt.keep_alive,
+            camera_id=camera_id,
+            counting_line=counting_line,
+            counting_line_direction=counting_line_direction,
+            custom_zones=custom_zones,
+            backend_api_base_url=self.config.backend_api.base_url,
+            edge_node_id=self.config.backend_api.edge_node_id,
+            edge_api_key=self.config.backend_api.edge_api_key,
+        )
+
+        # 4. Iniciar hilo o asignar como pipeline principal según corresponda
+        if hasattr(self, "active_pipelines") and self.active_pipelines:
+            t = threading.Thread(
+                target=self._camera_thread_loop,
+                args=(pipeline, camera_id, video_src),
+                daemon=True
+            )
+            t.start()
+            self.active_pipelines[camera_id] = {"pipeline": pipeline, "thread": t}
+            self.logger.info("Cámara %s iniciada en hilo en modo de recarga.", camera_id)
+        else:
+            self.pipeline = pipeline
+            t = threading.Thread(
+                target=self._camera_thread_loop,
+                args=(pipeline, camera_id, video_src),
+                daemon=True
+            )
+            t.start()
+            self.logger.info("Cámara %s iniciada en modo local (recarga).", camera_id)
 
     def _cleanup(self) -> None:
         if self.control_mqtt_subscriber:

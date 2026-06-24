@@ -70,13 +70,13 @@ class BehaviorAnalyzer:
         analysis.abnormal_posture_score = abnormal_posture_score
         
         # Registrar reglas disparadas
-        if hidden_hands_score > 0.6:
+        if hidden_hands_score > 0.5:
             analysis.rules_triggered.append("Manos Ocultas/Bolsillos")
-        if abnormal_posture_score > 0.6:
+        if abnormal_posture_score > 0.5:
             analysis.rules_triggered.append("Inclinacion/Agachamiento")
         
         # COMBINACIÓN CORREGIDA: Tomamos el RIESGO MÁXIMO, no un promedio diluido.
-        # Así, si hace solo una cosa sospechosa, igual se dispara la alerta (> 0.7).
+        # Así, si hace solo una cosa sospechosa, igual se dispara la alerta (> 0.4).
         combined_score = max(hidden_hands_score, abnormal_posture_score)
         analysis.risk_score = min(1.0, combined_score)
         
@@ -106,7 +106,7 @@ class BehaviorAnalyzer:
             
             # Si ambas manos están cerca de los bolsillos/cintura
             if normalized_l < self.HIDDEN_HANDS_DISTANCE_THRESHOLD and normalized_r < self.HIDDEN_HANDS_DISTANCE_THRESHOLD:
-                return 0.85 # Dispara la alarma (> 0.7)
+                return 0.60 # Alerta de Sospechoso (> 0.4)
             
             return 0.0
             
@@ -140,7 +140,7 @@ class BehaviorAnalyzer:
             normalized_vertical = vertical_distance / torso_height
             
             if normalized_deviation > self.ABNORMAL_POSTURE_THRESHOLD or normalized_vertical < 0.08:
-                return 0.85 # Dispara la alarma (> 0.7)
+                return 0.60 # Alerta de Sospechoso (> 0.4)
             
             return 0.0
             

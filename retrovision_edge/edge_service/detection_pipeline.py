@@ -672,7 +672,7 @@ class DetectionPipeline:
                         try:
                             analysis = self._behavior_analyzer.analyze(det.landmarks)
                             det.risk_score = analysis.risk_score
-                            if analysis.risk_score > 0.7:
+                            if analysis.risk_score > 0.4:
                                 det_rules.extend(analysis.rules_triggered)
                         except Exception as e:
                             self.logger.debug(f"Risk analysis failed for detection: {e}")
@@ -704,7 +704,7 @@ class DetectionPipeline:
                     try:
                         frames_to_save = self._ring_buffer.get_frames()
                         if frames_to_save:
-                            max_risk = max([det.risk_score for det in detection_result.detections] or [0.7])
+                            max_risk = max([det.risk_score for det in detection_result.detections] or [0.4])
                             rules = []
                             for tid, rlist in rules_this_frame.items():
                                 rules.extend(rlist)
@@ -713,7 +713,7 @@ class DetectionPipeline:
                             # Find which zone the threat was in
                             alert_zone = ""
                             for det in detection_result.detections:
-                                if det.risk_score > 0.7:
+                                if det.risk_score > 0.4:
                                     cx, cy = det.center()
                                     for zone_name, poly_np in scaled_custom_zones:
                                         if cv2.pointPolygonTest(poly_np, (float(cx), float(cy)), False) >= 0:

@@ -210,7 +210,9 @@ class DetectionPipeline:
             
             # Inicializar ring buffer (FASE 2)
             try:
-                self._ring_buffer = RingBuffer(fps=self.target_fps, retention_seconds=30)
+                import os
+                retention_val = int(os.getenv("BUFFER_DURATION", "10"))
+                self._ring_buffer = RingBuffer(fps=self.target_fps, retention_seconds=retention_val)
             except Exception as e:
                 self._ring_buffer = None
                 self.logger.warning(f"RingBuffer no inicializado: {e}")

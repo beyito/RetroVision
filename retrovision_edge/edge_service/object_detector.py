@@ -314,7 +314,9 @@ class ObjectDetector:
                 if confidence < self.confidence_threshold:
                     continue
             else:
-                if confidence < 0.50:
+                import os
+                weapon_threshold = float(os.getenv("WEAPON_CONFIDENCE_THRESHOLD", "0.50"))
+                if confidence < weapon_threshold:
                     continue
             
             # Convertir coordenadas a enteros y validar límites

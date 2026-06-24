@@ -19,6 +19,7 @@ import CameraConfigurationPanel from './components/CameraConfigurationPanel';
 import RegisterScreen from './components/RegisterScreen';
 import StripeCheckoutMock from './components/StripeCheckoutMock';
 import Dashboard from './Dashboard';
+import ChatbotAssistant from './components/ChatbotAssistant';
 import { API_BASE_URL } from './config';
 
 const AUTH_STORAGE_KEY = 'retrovision_auth';
@@ -849,6 +850,9 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
           )}
         </div>
       ) : null}
+      
+      {/* Asistente Chatbot PLN */}
+      <ChatbotAssistant token={token} onRefreshData={fetchAdminData} />
     </div>
   );
 }

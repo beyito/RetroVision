@@ -1,6 +1,7 @@
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
+from unittest.mock import patch, MagicMock
 from rest_framework import status
 from rest_framework.test import APITestCase
 from accounts.models import User
@@ -183,4 +184,116 @@ class RetroVisionApiTests(APITestCase):
         self.assertIn("predicted_queue", pred)
         self.assertIn("alert_probability", pred)
 
+    @patch("requests.post")
+    def test_chatbot_assistant_creation(self, mock_post):
+        """Test Chatbot assistant creates resources and enforces tenant scope."""
+        mock_response_1 = MagicMock()
+        mock_response_1.status_code = 200
+        mock_response_1.json.return_value = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "crear_tienda",
+                            "args": {
+                                "nombre": "Tienda Chatbot",
+                                "direccion": "Calle Falsa 123"
+                            }
+                        }
+                    }]
+                }
+            }]
+        }
 
+        mock_response_2 = MagicMock()
+        mock_response_2.status_code = 200
+        mock_response_2.json.return_value = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "He creado la tienda 'Tienda Chatbot' exitosamente."
+                    }]
+                }
+            }]
+        }
+
+        mock_post.side_effect = [mock_response_1, mock_response_2]
+
+        url = reverse("chatbot-chat")
+        self.client.force_authenticate(user=self.admin_empresa_a)
+
+        payload = {
+            "message": "Crea una tienda llamada Tienda Chatbot en Calle Falsa 123",
+            "history": []
+        }
+
+        response = self.client.post(url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        data = response.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("He creado la tienda", data["text"])
+        self.assertEqual(len(data["actions"]), 1)
+        self.assertEqual(data["actions"][0]["type"], "store_created")
+        self.assertEqual(data["actions"][0]["name"], "Tienda Chatbot")
+
+        # Verify Store is created and owned by tenant_a
+        created_store = Store.objects.filter(name="Tienda Chatbot").first()
+        self.assertIsNotNone(created_store)
+        self.assertEqual(created_store.tenant, self.tenant_a)
+
+    @patch("requests.post")
+    def test_chatbot_assistant_camera_limit(self, mock_post):
+        """Test Chatbot assistant checks camera limit before creation."""
+        # Límite de Empresa A es 3, ya tiene 2. Creamos una más para llegar al tope.
+        Camera.objects.create(store=self.store_a1, camera_id="cam-a3", display_name="Camara A3")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "name": "crear_camara",
+                            "args": {
+                                "tienda_id": self.store_a1.id,
+                                "camera_id": "cam-a4",
+                                "nombre_mostrar": "Camara A4"
+                            }
+                        }
+                    }]
+                }
+            }]
+        }
+
+        mock_response_2 = MagicMock()
+        mock_response_2.status_code = 200
+        mock_response_2.json.return_value = {
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "text": "Lamentablemente he fallado porque se superó el límite."
+                    }]
+                }
+            }]
+        }
+        mock_post.side_effect = [mock_response, mock_response_2]
+
+        url = reverse("chatbot-chat")
+        self.client.force_authenticate(user=self.admin_empresa_a)
+
+        payload = {
+            "message": "Registra una cámara cam-a4",
+            "history": []
+        }
+
+        response = self.client.post(url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        # Verify Camera was NOT created in DB due to limit violation
+        self.assertFalse(Camera.objects.filter(camera_id="cam-a4").exists())

@@ -1101,3 +1101,40 @@ class PredictiveAnalysisView(APIView):
         })
 
 
+import logging
+from .chatbot_service import run_chatbot_session
+
+logger = logging.getLogger("RetroVision.Views")
+
+class ChatbotAssistantView(APIView):
+    """
+    API view to interact with the natural language Chatbot Assistant.
+    Enforces user authentication and runs the Gemini function-calling session.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        message = request.data.get("message")
+        history = request.data.get("history") or []
+        
+        if not message:
+            return Response({"error": "El parámetro 'message' es requerido."}, status=400)
+            
+        user = request.user
+        if not getattr(user, "tenant", None):
+            return Response({"error": "No tienes una empresa (tenant) asociada a tu usuario."}, status=403)
+            
+        try:
+            text_response, updated_history, actions = run_chatbot_session(user, message, history)
+            return Response({
+                "status": "success",
+                "text": text_response,
+                "history": updated_history,
+                "actions": actions
+            })
+        except Exception as e:
+            logger.error(f"Error in ChatbotAssistantView: {e}", exc_info=True)
+            return Response({"error": str(e)}, status=500)
+
+
+

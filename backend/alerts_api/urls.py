@@ -10,6 +10,7 @@ from .views import (
     HeatmapsViewSet,
     DynamicReportView,
     PredictiveAnalysisView,
+    ChatbotAssistantView,
 )
 
 router = DefaultRouter()
@@ -25,6 +26,7 @@ urlpatterns = [
     path('telemetry/predictive/', PredictiveAnalysisView.as_view(), name='telemetry-predictive'),
     path('', include(router.urls)),
     path('reports/dynamic/', DynamicReportView.as_view(), name='dynamic-report'),
+    path('chatbot/chat/', ChatbotAssistantView.as_view(), name='chatbot-chat'),
 ]
 
 

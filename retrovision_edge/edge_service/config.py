@@ -128,7 +128,7 @@ class EdgeServiceConfig:
         )
 
         self.ring_buffer = RingBufferConfig(
-            buffer_duration_seconds=int(os.getenv('BUFFER_DURATION', 30)),
+            buffer_duration_seconds=int(os.getenv('BUFFER_DURATION', 8)),
         )
 
         # Parse polygon ROI

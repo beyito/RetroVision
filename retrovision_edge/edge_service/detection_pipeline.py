@@ -117,6 +117,8 @@ class DetectionPipeline:
         self.queue_alert_started_at = None
         # Last seen time: track_id -> float timestamp
         self.last_seen_time = {}
+        # Track already alerted rules to avoid repetitive anomalies: (track_id, rule) -> float timestamp
+        self.alerted_track_rules = {}
         
         # Telemetry aggregators
         self.seen_track_ids = set()
@@ -521,6 +523,11 @@ class DetectionPipeline:
                         self.queue_candidate_since.pop(tid)
                     if tid in self.roi_entry_times:
                         self.roi_entry_times.pop(tid)
+                    
+                    # Limpiar reglas alertadas asociadas al track_id
+                    for key in list(self.alerted_track_rules.keys()):
+                        if key[0] == tid:
+                            self.alerted_track_rules.pop(key)
 
             # Memory cleanup: purge obsolete track IDs from sides & cross states after 50 frames of invisibility
             for tid in list(self.last_seen_frame.keys()):
@@ -644,59 +651,63 @@ class DetectionPipeline:
             # 6. Analizar riesgo por cada detección (FASE 2)
             if self._behavior_analyzer is not None and self._alert_writer is not None:
                 high_risk_detected = False
+                rules_this_frame = {}  # track_id -> list of rules triggered in this frame
+                
                 for det in detection_result.detections:
                     is_weapon = det.class_name.lower() in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle") or any(w in det.class_name.lower() for w in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle"))
                     is_mask = det.class_name.lower() == "mask"
                     
-                    if is_weapon or is_mask:
-                        # Forzar risk_score al 95% o la confianza (lo que sea mayor)
-                        det.risk_score = max(0.95, det.confidence)
-                        high_risk_detected = True
-                        self.logger.warning(
-                            f"ALERTA CRÍTICA: Amenaza detectada ({det.class_name}) con probabilidad {det.confidence:.2f}"
-                        )
+                    det_rules = []
+                    if is_weapon:
+                        is_firearm = any(w in det.class_name.lower() for w in ("pistol", "handgun", "firearm", "gun", "rifle"))
+                        if is_firearm:
+                            det_rules.append("Presencia de Arma de Fuego")
+                        else:
+                            det_rules.append("Presencia de Arma Blanca")
+                    elif is_mask:
+                        det_rules.append("Persona Enmascarada")
+                    elif det.class_name.lower() == "no-mask":
                         continue
+                    elif det.landmarks:
+                        try:
+                            analysis = self._behavior_analyzer.analyze(det.landmarks)
+                            det.risk_score = analysis.risk_score
+                            if analysis.risk_score > 0.7:
+                                det_rules.extend(analysis.rules_triggered)
+                        except Exception as e:
+                            self.logger.debug(f"Risk analysis failed for detection: {e}")
+                    
+                    if det_rules:
+                        if is_weapon or is_mask:
+                            det.risk_score = max(0.95, det.confidence)
                         
-                    if det.class_name.lower() == "no-mask":
-                        # no-mask es normal, ignorar en análisis de riesgo
-                        continue
-                    try:
-                        analysis = self._behavior_analyzer.analyze(det.landmarks)
-                        det.risk_score = analysis.risk_score
+                        rules_this_frame[det.track_id] = det_rules
                         
-                        if analysis.risk_score > 0.7:
+                        # Filtrar las reglas que ya están en cooldown para este track
+                        new_rules = []
+                        for rule in det_rules:
+                            key = (det.track_id, rule)
+                            # Cooldown por anomalía y track ID (5 minutos = 300s)
+                            if key in self.alerted_track_rules:
+                                if current_time - self.alerted_track_rules[key] < 300.0:
+                                    continue
+                            new_rules.append(rule)
+                        
+                        if new_rules:
                             high_risk_detected = True
-                            self.logger.warning(
-                                f"ALERTA: Risk Score CRÍTICO {analysis.risk_score:.2f} "
-                                f"Reglas: {', '.join(analysis.rules_triggered)}"
+                            self.logger.debug(
+                                f"ALERTA DE SEGURIDAD DETECTADA: Track ID {det.track_id} disparó {', '.join(new_rules)}"
                             )
-                    except Exception as e:
-                        self.logger.debug(f"Risk analysis failed for detection: {e}")
                 
                 # Guardar video si se disparó alerta
                 if high_risk_detected and self._alert_writer.is_alert_ready():
                     try:
                         frames_to_save = self._ring_buffer.get_frames()
                         if frames_to_save:
-                            max_risk = max(det.risk_score for det in detection_result.detections)
+                            max_risk = max([det.risk_score for det in detection_result.detections] or [0.7])
                             rules = []
-                            for det in detection_result.detections:
-                                if det.risk_score > 0.7:
-                                    is_firearm = any(w in det.class_name.lower() for w in ("pistol", "handgun", "firearm", "gun", "rifle"))
-                                    is_cold_weapon = any(w in det.class_name.lower() for w in ("knife", "scissors"))
-                                    is_generic_weapon = det.class_name.lower() in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle") or any(w in det.class_name.lower() for w in ("knife", "scissors", "pistol", "handgun", "firearm", "gun", "rifle"))
-                                    is_mask = det.class_name.lower() == "mask"
-                                    
-                                    if is_firearm:
-                                        rules.append("Presencia de Arma de Fuego")
-                                    elif is_cold_weapon:
-                                        rules.append("Presencia de Arma Blanca")
-                                    elif is_mask:
-                                        rules.append("Persona Enmascarada")
-                                    elif is_generic_weapon:
-                                        rules.append("Presencia de Arma Blanca")
-                                    elif det.landmarks:
-                                        rules.extend(self._behavior_analyzer.analyze(det.landmarks).rules_triggered)
+                            for tid, rlist in rules_this_frame.items():
+                                rules.extend(rlist)
                             rules = list(set(rules))
                             
                             # Find which zone the threat was in
@@ -705,20 +716,19 @@ class DetectionPipeline:
                                 if det.risk_score > 0.7:
                                     cx, cy = det.center()
                                     for zone_name, poly_np in scaled_custom_zones:
-                                        
                                         if cv2.pointPolygonTest(poly_np, (float(cx), float(cy)), False) >= 0:
                                             alert_zone = zone_name
                                             break
                                     if alert_zone:
                                         break
-
+                            
                             video_path = self._alert_writer.write_alert_async(
                                 frames_to_save,
                                 risk_score=max_risk,
                                 triggered_rules=rules,
                                 zona=alert_zone,
                             )
-
+                            
                             if self._alert_publisher is not None:
                                 self._alert_publisher.publish_alert(
                                     camera_id=self.camera_id,
@@ -727,6 +737,15 @@ class DetectionPipeline:
                                     video_path=video_path,
                                     zona=alert_zone,
                                 )
+                            
+                            self.logger.warning(
+                                f"🔥 ¡ALERTA DE SEGURIDAD EMITIDA! Reglas: {', '.join(rules)} | Zona: {alert_zone or 'Ninguna'}"
+                            )
+                            
+                            # Registrar tiempo de alerta para las reglas y objetos involucrados
+                            for tid, rlist in rules_this_frame.items():
+                                for rule in rlist:
+                                    self.alerted_track_rules[(tid, rule)] = current_time
                     except Exception as e:
                         self.logger.error(f"Error disparando alerta: {e}")
             

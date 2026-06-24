@@ -57,6 +57,8 @@ LOG_LEVEL=INFO
 LOG_FILE=logs/edge_service.log
 DEBUG_MODE=false
 MODEL_NAME=best.pt
+BUFFER_DURATION=8
+WEAPON_CONFIDENCE_THRESHOLD=0.65
 EOT
     echo ""
     echo "[INFO] Archivo de configuración .env creado con éxito."

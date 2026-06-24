@@ -61,6 +61,8 @@ echo LOG_LEVEL=INFO >> .env
 echo LOG_FILE=logs/edge_service.log >> .env
 echo DEBUG_MODE=false >> .env
 echo MODEL_NAME=best.pt >> .env
+echo BUFFER_DURATION=8 >> .env
+echo WEAPON_CONFIDENCE_THRESHOLD=0.65 >> .env
 
 echo.
 echo [INFO] Archivo de configuración .env creado con éxito.

@@ -918,6 +918,50 @@ class DetectionPipeline:
             
         except Exception as e:
             self.logger.error(f"Error al liberar pipeline: {e}")
+
+    def update_config(self, new_config: dict) -> None:
+        """Actualiza la configuración geométrica y de reglas del pipeline en caliente."""
+        if "camera_id" in new_config and new_config["camera_id"]:
+            self.camera_id = new_config["camera_id"]
+            
+        self.logger.info("[%s] Actualizando configuración en caliente...", self.camera_id)
+        
+        # 1. Polígonos de ROI
+        if "roi_polygon" in new_config:
+            self.roi_polygon = new_config["roi_polygon"] or []
+            self.roi_poly_np = np.array(self.roi_polygon, dtype=np.int32).reshape((-1, 1, 2)) if self.roi_polygon else None
+            
+        if "queue_roi_polygon" in new_config:
+            self.queue_roi_polygon = new_config["queue_roi_polygon"] or []
+            self.queue_roi_poly_np = np.array(self.queue_roi_polygon, dtype=np.int32).reshape((-1, 1, 2)) if self.queue_roi_polygon else None
+            
+        # 2. Línea de conteo
+        if "counting_line" in new_config:
+            self.counting_line = new_config["counting_line"] or []
+        if "counting_line_direction" in new_config:
+            self.counting_line_direction = new_config["counting_line_direction"] or "forward"
+            
+        # 3. Zonas personalizadas
+        if "custom_zones" in new_config:
+            self.custom_zones = new_config["custom_zones"] or []
+            
+        # 4. Parámetros de cola y límites
+        if "queue_wait_threshold" in new_config:
+            self.queue_wait_threshold = new_config["queue_wait_threshold"]
+        if "queue_dwell_seconds" in new_config:
+            self.queue_dwell_seconds = new_config["queue_dwell_seconds"]
+        if "queue_alert_people_threshold" in new_config:
+            self.queue_alert_people_threshold = new_config["queue_alert_people_threshold"]
+        if "queue_alert_duration_seconds" in new_config:
+            self.queue_alert_duration_seconds = new_config["queue_alert_duration_seconds"]
+        if "max_allowed_wait_seconds" in new_config:
+            self.max_allowed_wait_seconds = new_config["max_allowed_wait_seconds"]
+        if "cashier_count" in new_config:
+            self.cashier_count = max(1, new_config["cashier_count"])
+        if "service_rate_per_cashier_per_minute" in new_config:
+            self.service_rate_per_cashier_per_minute = max(0.1, new_config["service_rate_per_cashier_per_minute"])
+            
+        self.logger.info("[%s] Configuración en caliente aplicada exitosamente.", self.camera_id)
     
     def __enter__(self):
         """Context manager entry."""

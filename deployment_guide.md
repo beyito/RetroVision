@@ -211,6 +211,15 @@ docker exec -it retrovision-web-prod python manage.py migrate
 ```
 Esto reconstruirá el frontend con Nginx, levantará el servidor Daphne (Django ASGI), reconectará a Supabase y mantendrá tu sistema en vivo con cero lag y total consistencia de datos.
 
+> [!TIP]
+> **Entrenamiento Automático de Modelos Predictivos (ML)**:
+> Al levantar el contenedor `retrovision-web-prod` mediante Docker Compose, el comando de inicio ejecuta automáticamente `python scratch/train_forecasting_models.py || true` antes de iniciar Daphne. Esto genera los archivos `.joblib` en caliente en el directorio `/app/scratch/` usando los datos de PostgreSQL.
+>
+> Si deseas forzar un re-entrenamiento manual de los modelos predictivos en caliente sin reiniciar el contenedor, puedes ejecutar:
+> ```bash
+> docker exec -it retrovision-web-prod python scratch/train_forecasting_models.py
+> ```
+
 ---
 
 ## 8. Configuración de HTTPS / SSL (Let's Encrypt)

@@ -29,7 +29,9 @@ services:
     build: ./backend
     container_name: retrovision-web
     restart: always
-    command: daphne -b 0.0.0.0 -p 8000 retrovision_core.asgi:application
+    command: >
+      sh -c "python scratch/train_forecasting_models.py || true &&
+             daphne -b 0.0.0.0 -p 8000 retrovision_core.asgi:application"
     ports:
       - "8000:8000"
     volumes:

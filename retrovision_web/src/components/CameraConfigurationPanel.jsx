@@ -33,6 +33,11 @@ function InputField({ field, value, onChange }) {
           className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0a1220] px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
         />
       )}
+      {field.hint && (
+        <span className="text-[10px] text-slate-400 mt-1.5 block leading-normal">
+          💡 {field.hint}
+        </span>
+      )}
     </div>
   );
 }

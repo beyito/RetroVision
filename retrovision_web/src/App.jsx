@@ -278,6 +278,11 @@ function ManagementSection({
                   className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0a1220] px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-500"
                 />
               )}
+              {field.hint && (
+                <span className="text-[10px] text-slate-400 mt-1.5 block leading-normal">
+                  💡 {field.hint}
+                </span>
+              )}
             </div>
           ))}
 
@@ -634,19 +639,19 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
       deleteAction: () => deleteRecord(`/api/stores/${selectedRecords.stores.id}/`, 'stores'),
     },
     edgeNodes: {
-      title: 'Nodos Edge',
-      subtitle: 'Dispositivos autorizados para sincronizar configuracion y reportar camaras.',
+      title: 'Dispositivos de Procesamiento Local (Nodos Edge)',
+      subtitle: 'Servidores o computadoras instaladas físicamente en tus locales para procesar transmisiones de video mediante Inteligencia Artificial.',
       items: datasets.edgeNodes,
       columns: [
-        { key: 'tenant_name', label: 'Tenant' },
-        { key: 'store_name', label: 'Tienda' },
+        { key: 'tenant_name', label: 'Empresa' },
+        { key: 'store_name', label: 'Tienda / Sucursal' },
         { key: 'node_id', label: 'ID del Nodo' },
-        { key: 'api_key', label: 'API Key' },
+        { key: 'api_key', label: 'API Key (Clave)' },
       ],
       fields: [
-        { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
-        { name: 'node_id', label: 'ID del Nodo' },
-        { name: 'display_name', label: 'Nombre visible' },
+        { name: 'store', label: 'Tienda / Sucursal Física', type: 'select', options: storeOptions, hint: 'Sucursal de tu empresa donde estará físicamente instalada la computadora.' },
+        { name: 'node_id', label: 'Código Único de Dispositivo (Node ID)', placeholder: 'ej: sucursal_central_servidor_01', hint: 'Identificador único que se ingresa en la consola del agente local para enlazar el hardware.' },
+        { name: 'display_name', label: 'Nombre Descriptivo del Servidor', placeholder: 'ej: Servidor Pasillo Central', hint: 'Nombre de fantasía amigable para reconocer fácilmente el dispositivo.' },
       ],
       submit: (event) => {
         event.preventDefault();
@@ -659,30 +664,30 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
       deleteAction: () => deleteRecord(`/api/edge-nodes/${selectedRecords.edgeNodes.id}/`, 'edgeNodes'),
     },
     cameras: {
-      title: 'Camaras',
-      subtitle: 'Catalogo central de camaras, ROI y configuracion operativa.',
+      title: 'Cámaras de Seguridad e IA',
+      subtitle: 'Catálogo de cámaras IP vinculadas para análisis de tráfico, colas y detección de amenazas en tiempo real.',
       items: datasets.cameras,
       columns: [
-        { key: 'tenant_name', label: 'Tenant' },
+        { key: 'tenant_name', label: 'Empresa' },
         { key: 'store_name', label: 'Tienda' },
-        { key: 'camera_id', label: 'Camera ID' },
-        { key: 'edge_node_name', label: 'Edge Node' },
-        { key: 'queue_alert_people_threshold', label: 'Umbral cola' },
+        { key: 'camera_id', label: 'Cámara ID' },
+        { key: 'edge_node_name', label: 'Servidor Asociado' },
+        { key: 'queue_alert_people_threshold', label: 'Umbral Alerta' },
       ],
       fields: [
-        { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
-        { name: 'edge_node', label: 'Nodo Edge', type: 'select', options: edgeNodeOptions },
-        { name: 'camera_id', label: 'Camera ID' },
-        { name: 'display_name', label: 'Nombre visible' },
-        { name: 'video_source', label: 'Video source' },
-        { name: 'queue_roi_polygon', label: 'ROI de cola', type: 'polygon' },
-        { name: 'queue_dwell_seconds', label: 'Permanencia minima (s)', type: 'number' },
-        { name: 'queue_alert_people_threshold', label: 'Personas para alerta', type: 'number' },
-        { name: 'queue_alert_duration_seconds', label: 'Duracion alerta (s)', type: 'number' },
-        { name: 'max_allowed_wait_seconds', label: 'Espera maxima permitida (s)', type: 'number' },
-        { name: 'cashier_count', label: 'Cantidad de cajeros', type: 'number' },
-        { name: 'service_rate_per_cashier_per_minute', label: 'Atencion por cajero/min', type: 'number' },
-        { name: 'queue_wait_threshold', label: 'Threshold cola (s)', type: 'number' },
+        { name: 'store', label: 'Tienda / Sucursal Asociada', type: 'select', options: storeOptions, hint: 'Sucursal de tu empresa a la que pertenece esta cámara.' },
+        { name: 'edge_node', label: 'Dispositivo Procesador (Nodo Edge)', type: 'select', options: edgeNodeOptions, hint: 'Computadora local que procesará la señal de video de esta cámara.' },
+        { name: 'camera_id', label: 'Código de Cámara (Camera ID)', placeholder: 'ej: camara_salida_cajas_01', hint: 'Nombre identificador único de la cámara en el sistema.' },
+        { name: 'display_name', label: 'Nombre Visible de la Cámara', placeholder: 'ej: Cámara Principal Pasillo 1', hint: 'Nombre amigable mostrado en los paneles de seguridad e informes.' },
+        { name: 'video_source', label: 'Enlace del Video de la Cámara (Origen)', placeholder: 'ej: rtsp://user:pass@192.168.1.100:554/stream o 0 para cámara web', hint: 'Dirección de red de transmisión (RTSP) de tu cámara de seguridad IP, o un identificador de webcam local (ej: 0).' },
+        { name: 'queue_roi_polygon', label: 'Área Poligonal de Cola (ROI)', type: 'polygon', hint: 'Polígono que delimita la zona donde se vigilan las colas de espera.' },
+        { name: 'queue_dwell_seconds', label: 'Tiempo Mínimo de Permanencia (Segundos)', type: 'number', hint: 'Segundos que debe pasar un cliente dentro del área para ser considerado como en cola (previene conteo de transeúntes).' },
+        { name: 'queue_alert_people_threshold', label: 'Umbral de Alerta (Personas)', type: 'number', hint: 'Cantidad de personas acumuladas en cola a partir de la cual se genera una alerta automática de congestión.' },
+        { name: 'queue_alert_duration_seconds', label: 'Tiempo de Estabilidad de Alerta (Segundos)', type: 'number', hint: 'Segundos continuos que debe sostenerse la congestión para notificar formalmente de la alerta.' },
+        { name: 'max_allowed_wait_seconds', label: 'Tiempo Máximo Sugerido de Espera (Segundos)', type: 'number', hint: 'Tiempo de espera máximo recomendado por estándares comerciales de la empresa.' },
+        { name: 'cashier_count', label: 'Cantidad de Cajas Abiertas', type: 'number', hint: 'Cantidad de terminales de pago activas en esa área de colas.' },
+        { name: 'service_rate_per_cashier_per_minute', label: 'Ritmo Medio de Atención (Personas/Minuto)', type: 'number', hint: 'Clientes estimados atendidos por minuto por cada cajero.' },
+        { name: 'queue_wait_threshold', label: 'Tolerancia Operativa (Segundos)', type: 'number', hint: 'Margen técnico de holgura en el cálculo analítico de esperas.' },
       ],
       submit: (event) => {
         event.preventDefault();
@@ -730,20 +735,20 @@ function AdminConsole({ token, profile, onRequestRefresh }) {
 
   const activeSection = sectionConfig[activeModule];
   const cameraGeneralFields = [
-    { name: 'store', label: 'Tienda', type: 'select', options: storeOptions },
-    { name: 'edge_node', label: 'Nodo Edge', type: 'select', options: edgeNodeOptions },
-    { name: 'camera_id', label: 'Camera ID' },
-    { name: 'display_name', label: 'Nombre visible' },
-    { name: 'video_source', label: 'Video source' },
+    { name: 'store', label: 'Tienda / Sucursal Asociada', type: 'select', options: storeOptions, hint: 'Sucursal de tu empresa a la que pertenece esta cámara.' },
+    { name: 'edge_node', label: 'Dispositivo Procesador (Nodo Edge)', type: 'select', options: edgeNodeOptions, hint: 'Computadora local que procesará la señal de video de esta cámara.' },
+    { name: 'camera_id', label: 'Código de Cámara (Camera ID)', placeholder: 'ej: camara_salida_cajas_01', hint: 'Nombre identificador único de la cámara en el sistema.' },
+    { name: 'display_name', label: 'Nombre Visible de la Cámara', placeholder: 'ej: Cámara Principal Pasillo 1', hint: 'Nombre amigable mostrado en los paneles de seguridad e informes.' },
+    { name: 'video_source', label: 'Enlace del Video de la Cámara (Origen)', placeholder: 'ej: rtsp://user:pass@192.168.1.100:554/stream o 0 para cámara web', hint: 'Dirección de red de transmisión (RTSP) de tu cámara de seguridad IP, o un identificador de webcam local (ej: 0).' },
   ];
   const cameraRoiFields = [
-    { name: 'queue_dwell_seconds', label: 'Permanencia minima (s)', type: 'number' },
-    { name: 'queue_alert_people_threshold', label: 'Personas para alerta', type: 'number' },
-    { name: 'queue_alert_duration_seconds', label: 'Duracion alerta (s)', type: 'number' },
-    { name: 'max_allowed_wait_seconds', label: 'Espera maxima permitida (s)', type: 'number' },
-    { name: 'cashier_count', label: 'Cantidad de cajeros', type: 'number' },
-    { name: 'service_rate_per_cashier_per_minute', label: 'Atencion por cajero/min', type: 'number' },
-    { name: 'queue_wait_threshold', label: 'Threshold cola (s)', type: 'number' },
+    { name: 'queue_dwell_seconds', label: 'Tiempo Mínimo de Permanencia (Segundos)', type: 'number', hint: 'Segundos que debe pasar un cliente dentro del área para ser considerado como en cola (previene conteo de transeúntes).' },
+    { name: 'queue_alert_people_threshold', label: 'Umbral de Alerta (Personas)', type: 'number', hint: 'Cantidad de personas acumuladas en cola a partir de la cual se genera una alerta automática de congestión.' },
+    { name: 'queue_alert_duration_seconds', label: 'Tiempo de Estabilidad de Alerta (Segundos)', type: 'number', hint: 'Segundos continuos que debe sostenerse la congestión para notificar formalmente de la alerta.' },
+    { name: 'max_allowed_wait_seconds', label: 'Tiempo Máximo Sugerido de Espera (Segundos)', type: 'number', hint: 'Tiempo de espera máximo recomendado por estándares comerciales de la empresa.' },
+    { name: 'cashier_count', label: 'Cantidad de Cajas Abiertas', type: 'number', hint: 'Cantidad de terminales de pago activas en esa área de colas.' },
+    { name: 'service_rate_per_cashier_per_minute', label: 'Ritmo Medio de Atención (Personas/Minuto)', type: 'number', hint: 'Clientes estimados atendidos por minuto por cada cajero.' },
+    { name: 'queue_wait_threshold', label: 'Tolerancia Operativa (Segundos)', type: 'number', hint: 'Margen técnico de holgura en el cálculo analítico de esperas.' },
   ];
 
   return (

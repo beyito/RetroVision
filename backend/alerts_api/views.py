@@ -185,6 +185,7 @@ class CameraViewSet(viewsets.ModelViewSet):
     queryset = Camera.objects.none()
     serializer_class = CameraSerializer
     lookup_field = 'camera_id'
+    lookup_value_regex = '[^/]+'
 
     def get_permissions(self):
         if isinstance(self.request.user, EdgeNode):

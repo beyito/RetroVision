@@ -863,3 +863,52 @@ class HeatmapsViewSet(viewsets.ReadOnlyModelViewSet):
         response = super().list(request, *args, **kwargs)
         cache.set(cache_key, response.data, timeout=2)  # Cache for 2 seconds
         return response
+
+
+from rest_framework.views import APIView
+import os
+from datetime import datetime
+from .dynamic_reports import generate_dynamic_report
+
+class DynamicReportView(APIView):
+    """
+    API view to generate dynamic NLP retail and security reports using Gemini.
+    Returns JSON preview or triggers binary PDF/Excel downloads.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        prompt = request.data.get("prompt")
+        format_type = request.data.get("format", "json")
+        model = request.data.get("model") or os.getenv("AI_MODEL", "gemini-3.1-flash-lite-preview")
+        
+        if not prompt:
+            return Response({"error": "El parámetro 'prompt' es requerido."}, status=400)
+            
+        # Compile user scoped cameras
+        camera_ids = _camera_ids_for_scope(request.user)
+        if not camera_ids:
+            return Response({"error": "No tiene cámaras asociadas para compilar reportes."}, status=403)
+            
+        try:
+            file_data, mime_type, file_ext = generate_dynamic_report(
+                request.user, 
+                camera_ids, 
+                prompt, 
+                format_type, 
+                model
+            )
+            
+            if format_type in ("pdf", "excel"):
+                filename = f"reporte_retrovision_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{file_ext}"
+                response = HttpResponse(file_data, content_type=mime_type)
+                response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+                return response
+            else:
+                return Response(file_data)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+        except Exception as e:
+            return Response({"error": f"Error del servicio de reportes: {str(e)}"}, status=500)
+

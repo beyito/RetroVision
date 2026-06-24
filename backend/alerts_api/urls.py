@@ -8,6 +8,7 @@ from .views import (
     SecurityAlertViewSet,
     TelemetriaAfluenciaViewSet,
     HeatmapsViewSet,
+    DynamicReportView,
 )
 
 router = DefaultRouter()
@@ -21,4 +22,6 @@ router.register(r'heatmaps', HeatmapsViewSet, basename='heatmap')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('reports/dynamic/', DynamicReportView.as_view(), name='dynamic-report'),
 ]
+

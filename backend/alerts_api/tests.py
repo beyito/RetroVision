@@ -140,3 +140,23 @@ class RetroVisionApiTests(APITestCase):
         data = response.json()
         self.assertIn("presigned_url", data)
         self.assertIn("s3_url", data)
+
+    def test_dynamic_report_validation(self):
+        """Test validation and error handling on dynamic reports view."""
+        url = reverse("dynamic-report")
+        
+        # 1. Missing prompt
+        self.client.force_authenticate(user=self.admin_empresa_a)
+        response = self.client.post(url, {"format": "json"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("prompt", response.json()["error"])
+        
+        # 2. Scoped cameras constraint (user with no accessible cameras)
+        user_no_cameras = User.objects.create_user(
+            username="no_cams", password="password123", role=User.SEGURIDAD, tenant=self.tenant_b
+        )
+        self.client.force_authenticate(user=user_no_cameras)
+        response = self.client.post(url, {"prompt": "Quiero ver las alertas"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("error", response.json())
+
